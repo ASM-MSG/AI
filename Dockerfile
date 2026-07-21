@@ -8,7 +8,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# x86_64는 기본 wheel이 CUDA를 끌고 와 2GB+ 받는다 — CPU 전용 인덱스로 먼저 설치.
+# (arm64도 같은 인덱스에 CPU wheel이 있어 분기 불필요. ec2-bench.sh와 같은 해법)
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+	&& pip install --no-cache-dir -r requirements.txt
 
 COPY bench.py server.py ./
 
