@@ -1,0 +1,55 @@
+{
+  "input": "samples/crowd.mp4",
+  "device": "cpu",
+  "resolution": "1920x1080",
+  "frames": 720,
+  "video_sec": 30.03,
+  "wall_sec": 192.95,
+  "realtime_factor": 6.43,
+  "ms_per_frame_inference": 228.35,
+  "peak_memory_mb": 895.2,
+  "detections": {
+    "face": 5799,
+    "plate": 48
+  },
+  "highlights": [
+    [
+      0.0,
+      19.19
+    ],
+    [
+      19.19,
+      30.03
+    ]
+  ],
+  "stages": {
+    "infer_face": {
+      "sec": 83.044,
+      "pct": 43.0
+    },
+    "infer_plate": {
+      "sec": 81.37,
+      "pct": 42.2
+    },
+    "mask": {
+      "sec": 11.404,
+      "pct": 5.9
+    },
+    "encode": {
+      "sec": 5.969,
+      "pct": 3.1
+    },
+    "highlight": {
+      "sec": 4.613,
+      "pct": 2.4
+    },
+    "decode": {
+      "sec": 4.171,
+      "pct": 2.2
+    },
+    "model_load": {
+      "sec": 2.254,
+      "pct": 1.2
+    }
+  }
+}

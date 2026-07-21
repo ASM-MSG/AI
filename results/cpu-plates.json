@@ -1,0 +1,46 @@
+{
+  "input": "samples/plates.mp4",
+  "device": "cpu",
+  "resolution": "1920x1080",
+  "frames": 750,
+  "video_sec": 30.0,
+  "wall_sec": 43.89,
+  "realtime_factor": 1.46,
+  "ms_per_frame_inference": 51.06,
+  "peak_memory_mb": 524.3,
+  "detections": {
+    "face": 264,
+    "plate": 702
+  },
+  "highlights": [],
+  "stages": {
+    "infer_face": {
+      "sec": 19.446,
+      "pct": 44.3
+    },
+    "infer_plate": {
+      "sec": 18.852,
+      "pct": 43.0
+    },
+    "encode": {
+      "sec": 2.937,
+      "pct": 6.7
+    },
+    "model_load": {
+      "sec": 1.496,
+      "pct": 3.4
+    },
+    "highlight": {
+      "sec": 0.619,
+      "pct": 1.4
+    },
+    "decode": {
+      "sec": 0.431,
+      "pct": 1.0
+    },
+    "mask": {
+      "sec": 0.017,
+      "pct": 0.0
+    }
+  }
+}

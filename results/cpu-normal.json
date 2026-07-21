@@ -1,0 +1,59 @@
+{
+  "input": "samples/normal.mp4",
+  "device": "cpu",
+  "resolution": "1920x1080",
+  "frames": 900,
+  "video_sec": 30.03,
+  "wall_sec": 51.46,
+  "realtime_factor": 1.71,
+  "ms_per_frame_inference": 49.23,
+  "peak_memory_mb": 528.2,
+  "detections": {
+    "face": 2614,
+    "plate": 11
+  },
+  "highlights": [
+    [
+      0.0,
+      14.85
+    ],
+    [
+      14.85,
+      29.7
+    ],
+    [
+      29.7,
+      30.03
+    ]
+  ],
+  "stages": {
+    "infer_face": {
+      "sec": 22.411,
+      "pct": 43.5
+    },
+    "infer_plate": {
+      "sec": 21.898,
+      "pct": 42.6
+    },
+    "encode": {
+      "sec": 4.598,
+      "pct": 8.9
+    },
+    "model_load": {
+      "sec": 1.145,
+      "pct": 2.2
+    },
+    "highlight": {
+      "sec": 0.776,
+      "pct": 1.5
+    },
+    "decode": {
+      "sec": 0.504,
+      "pct": 1.0
+    },
+    "mask": {
+      "sec": 0.065,
+      "pct": 0.1
+    }
+  }
+}
