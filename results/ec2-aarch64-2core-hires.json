@@ -1,0 +1,59 @@
+{
+  "input": "samples/hires.mp4",
+  "device": "cpu",
+  "resolution": "2160x3840",
+  "frames": 1800,
+  "video_sec": 30.0,
+  "wall_sec": 580.42,
+  "realtime_factor": 19.35,
+  "ms_per_frame_inference": 229.44,
+  "peak_memory_mb": 1106.1,
+  "detections": {
+    "face": 28719,
+    "plate": 223
+  },
+  "highlights": [
+    [
+      0.0,
+      12.17
+    ],
+    [
+      12.17,
+      24.33
+    ],
+    [
+      24.33,
+      30.0
+    ]
+  ],
+  "stages": {
+    "infer_face": {
+      "sec": 207.843,
+      "pct": 35.8
+    },
+    "infer_plate": {
+      "sec": 205.154,
+      "pct": 35.3
+    },
+    "encode": {
+      "sec": 88.089,
+      "pct": 15.2
+    },
+    "mask": {
+      "sec": 37.131,
+      "pct": 6.4
+    },
+    "highlight": {
+      "sec": 30.938,
+      "pct": 5.3
+    },
+    "decode": {
+      "sec": 8.69,
+      "pct": 1.5
+    },
+    "model_load": {
+      "sec": 2.28,
+      "pct": 0.4
+    }
+  }
+}
