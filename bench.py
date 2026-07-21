@@ -26,7 +26,10 @@ FACE_MODEL = ("AdamCodd/YOLOv11n-face-detection", "model.pt")
 PLATE_MODEL = ("morsetechlab/yolov11-license-plate-detection", "license-plate-finetune-v1n.pt")
 
 # 블러는 과하게 걸려도 손해가 작지만 미탐지는 프라이버시 사고다 → 기본값을 낮게 잡는다.
-CONF = 0.25
+# 얼굴 0.05는 MSG-158 실험 결과 (results/MSG-158-report.md) — recall 0.72→0.98, 시간 불변.
+# 번호판은 미실험이라 0.25 유지.
+FACE_CONF = 0.05
+PLATE_CONF = 0.25
 
 
 class Stage:
@@ -127,9 +130,9 @@ def run(path, device, out_path):
 		frames += 1
 
 		with stage.track("infer_face"):
-			fr = face.predict(frame, conf=CONF, verbose=False)[0]
+			fr = face.predict(frame, conf=FACE_CONF, verbose=False)[0]
 		with stage.track("infer_plate"):
-			pr = plate.predict(frame, conf=CONF, verbose=False)[0]
+			pr = plate.predict(frame, conf=PLATE_CONF, verbose=False)[0]
 
 		fb, pb = to_boxes(fr, width, height), to_boxes(pr, width, height)
 		face_hits += len(fb)
