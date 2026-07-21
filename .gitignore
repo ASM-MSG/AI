@@ -6,3 +6,6 @@ __pycache__/
 samples/
 out*.mp4
 *.pt
+
+# 서버 작업 디렉토리 — 사용자 영상이 담긴다
+jobs/
