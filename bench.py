@@ -92,12 +92,17 @@ def to_boxes(result, width, height):
 	return out
 
 
-def detect_highlights(path, stage):
+def detect_highlights(path, duration, stage):
 	"""PySceneDetect 장면 전환 기준 상위 3구간. 5초 미만이면 건너뛴다 (MSG-141)."""
 	from scenedetect import ContentDetector, detect
 
 	with stage.track("highlight"):
 		scenes = detect(str(path), ContentDetector())
+	if not scenes:
+		# MSG-159: 한 자리 촬영엔 장면 전환이 없어 0개가 나온다 → 균등 3분할 폴백.
+		# ponytail: 균등 분할 — 추천 품질 불만이 실측되면 움직임량 랭킹으로 승격
+		third = duration / 3
+		return [[round(i * third, 2), round((i + 1) * third, 2)] for i in range(3)]
 	ranked = sorted(scenes, key=lambda s: (s[1] - s[0]).get_seconds(), reverse=True)
 	return [[round(s.get_seconds(), 2), round(e.get_seconds(), 2)] for s, e in ranked[:3]]
 
@@ -144,7 +149,7 @@ def run(path, device, out_path):
 	writer.release()
 
 	duration = frames / fps if fps else 0
-	highlights = detect_highlights(path, stage) if duration >= 5 else []
+	highlights = detect_highlights(path, duration, stage) if duration >= 5 else []
 	wall = time.perf_counter() - wall_start
 
 	infer = stage.totals.get("infer_face", 0) + stage.totals.get("infer_plate", 0)
@@ -183,6 +188,7 @@ def smoke():
 		assert report["frames"] > 0, "프레임을 하나도 읽지 못했다"
 		assert dst.exists() and dst.stat().st_size > 0, "출력 영상이 비었다"
 		assert len(report["highlights"]) <= 3, "하이라이트는 최대 3구간 (MSG-141)"
+		assert report["highlights"], "5초 이상인데 하이라이트 0개 (MSG-159 폴백 미작동)"
 		assert set(report["stages"]) >= {"decode", "infer_face", "encode"}, "단계 계측 누락"
 		print(json.dumps(report, indent=2, ensure_ascii=False))
 		print("\nsmoke OK")
