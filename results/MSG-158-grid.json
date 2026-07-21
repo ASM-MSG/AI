@@ -1,0 +1,102 @@
+{
+  "videos": [
+    "samples/crowd.mp4",
+    "samples/plates.mp4"
+  ],
+  "frames_per_video": 30,
+  "device": "cpu",
+  "consensus_gt_boxes": 353,
+  "note": "recall은 합의 pseudo-GT 기준 상대 지표. 절대값 판단·최종 선택은 주석 프레임 육안 검증으로.",
+  "results": [
+    {
+      "config": "baseline",
+      "model": "adamcodd-n",
+      "conf": 0.25,
+      "imgsz": 640,
+      "faces_detected": 259,
+      "consensus_recall": 0.72,
+      "ms_per_frame": 24.7,
+      "vs_baseline": 1.0
+    },
+    {
+      "config": "conf-0.15",
+      "model": "adamcodd-n",
+      "conf": 0.15,
+      "imgsz": 640,
+      "faces_detected": 306,
+      "consensus_recall": 0.841,
+      "ms_per_frame": 24.7,
+      "vs_baseline": 1.0
+    },
+    {
+      "config": "conf-0.10",
+      "model": "adamcodd-n",
+      "conf": 0.1,
+      "imgsz": 640,
+      "faces_detected": 356,
+      "consensus_recall": 0.926,
+      "ms_per_frame": 24.4,
+      "vs_baseline": 0.99
+    },
+    {
+      "config": "conf-0.05",
+      "model": "adamcodd-n",
+      "conf": 0.05,
+      "imgsz": 640,
+      "faces_detected": 465,
+      "consensus_recall": 0.98,
+      "ms_per_frame": 25.0,
+      "vs_baseline": 1.01
+    },
+    {
+      "config": "model-v11n",
+      "model": "deepghs-n",
+      "conf": 0.25,
+      "imgsz": 640,
+      "faces_detected": 259,
+      "consensus_recall": 0.708,
+      "ms_per_frame": 24.3,
+      "vs_baseline": 0.98
+    },
+    {
+      "config": "model-v11s",
+      "model": "deepghs-s",
+      "conf": 0.25,
+      "imgsz": 640,
+      "faces_detected": 284,
+      "consensus_recall": 0.773,
+      "ms_per_frame": 50.6,
+      "vs_baseline": 2.05
+    },
+    {
+      "config": "model-v11m",
+      "model": "deepghs-m",
+      "conf": 0.25,
+      "imgsz": 640,
+      "faces_detected": 299,
+      "consensus_recall": 0.805,
+      "ms_per_frame": 102.9,
+      "vs_baseline": 4.16
+    },
+    {
+      "config": "imgsz-960",
+      "model": "adamcodd-n",
+      "conf": 0.25,
+      "imgsz": 960,
+      "faces_detected": 246,
+      "consensus_recall": 0.697,
+      "ms_per_frame": 51.5,
+      "vs_baseline": 2.08
+    },
+    {
+      "config": "imgsz-1280",
+      "model": "adamcodd-n",
+      "conf": 0.25,
+      "imgsz": 1280,
+      "faces_detected": 244,
+      "consensus_recall": 0.663,
+      "ms_per_frame": 97.0,
+      "vs_baseline": 3.93
+    }
+  ]
+}
