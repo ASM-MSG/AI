@@ -47,8 +47,8 @@ release/{버전}
 
 - 완료: MSG-142(측정) · MSG-143(ADR) · MSG-144(모델 선정) ·
   MSG-158(얼굴 conf 0.05 — 근거는 `results/MSG-158-report.md`) ·
-  MSG-159(하이라이트 균등 3분할 폴백)
-- 진행 중: **MSG-161** FastAPI 서버 — 구현·로컬 검증 완료(`server.py`, BE 계약은
-  README "API" 절). 남은 건 dev EC2 Docker 배포 검증(`scripts/ec2-deploy.sh`)
-- 다음 큰 덩어리: BE 연동 — README 계약대로 BE 쪽 클라이언트·`processing_status`
-  구현 (BE 레포에 티켓 필요)
+  MSG-159(하이라이트 균등 3분할 폴백) · MSG-161(FastAPI 서버, dev EC2 Docker 상주) ·
+  MSG-168(BE↔AI dev E2E 개통 — BE `AI_ENABLED=true` 상시 활성) ·
+  MSG-151(부하 측정 — **Kafka 불필요** 판단, 근거는 `results/MSG-151-report.md`)
+- 남은 것: 감지 건수(얼굴 N·번호판 N) 응답 추가(MSG-140 잔여 완료 조건) ·
+  AI 처리량 확장은 시간당 20건+ 지속 시 재평가(MSG-151 트리거)
