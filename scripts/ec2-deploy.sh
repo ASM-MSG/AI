@@ -56,7 +56,10 @@ log "5/5 실영상 E2E (1080p 30초 — 3~4분 예상)"
 SAMPLE=/tmp/e2e-plates.mp4
 if [ ! -s "$SAMPLE" ]; then
 	curl -sL -o /tmp/raw-e2e.mp4 "https://www.pexels.com/download/video/854671/"
-	ffmpeg -y -v error -stream_loop -1 -i /tmp/raw-e2e.mp4 -t 30 \
+	# ffmpeg은 방금 빌드한 이미지 안의 것을 쓴다 — 호스트에 따로 깔지 않는다.
+	# 호스트 ffmpeg에 의존했다가 새로 만든 EC2에 없어서 여기서 죽은 적이 있다 (MSG-282).
+	sudo docker run --rm -v /tmp:/tmp fillmap-ai \
+		ffmpeg -y -v error -stream_loop -1 -i /tmp/raw-e2e.mp4 -t 30 \
 		-c:v libx264 -preset veryfast -pix_fmt yuv420p "$SAMPLE"
 	rm -f /tmp/raw-e2e.mp4
 fi
