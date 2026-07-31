@@ -36,6 +36,23 @@ docker build -t fillmap-ai .
 docker run -p 8000:8000 -v hf-cache:/root/.cache/huggingface fillmap-ai
 ```
 
+### 배포 (MSG-282)
+
+**`main`에 머지하면 자동 배포된다.** GitHub Actions(`.github/workflows/cd-dev.yml`)가
+`scripts/ec2-deploy.sh`를 dev EC2에서 실행한다 — pull → 이미지 빌드 → 컨테이너 교체 →
+`/health` 대기 → 실영상 E2E. E2E까지 통과해야 초록불이라, 뜨자마자 죽은 경우를 잡는다.
+
+수동으로 돌릴 때(Actions 없이, 또는 재배포):
+
+```bash
+gh workflow run "CD (dev)" --repo ASM-MSG/AI      # 워크플로 수동 트리거
+# 또는 EC2에서 직접
+scp scripts/ec2-deploy.sh <user>@<host>:~/ && ssh <user>@<host> 'bash ec2-deploy.sh'
+```
+
+배포 대상은 secrets(`DEV_EC2_HOST`/`DEV_EC2_USER`/`DEV_EC2_SSH_KEY`)로 주입한다.
+AI 전용 인스턴스로 분리하면 secrets 값만 갈면 된다.
+
 ### API (BE ↔ AI 계약)
 
 처리는 비동기다 — 1080p 30초 기준 3~4분 걸린다(실측). BE는 업로드 후
