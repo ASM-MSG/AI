@@ -7,10 +7,16 @@
     python bench.py sample.mp4 --device cpu
     python bench.py sample.mp4 --device mps        # Apple Silicon
     python bench.py sample.mp4 --device cuda       # AWS GPU 인스턴스
+
+MSG-207 실험 노브 (환경변수) — **둘 다 실측 결과 미채택, 기본값이 정본** (results/MSG-207-report.md):
+    AI_BACKEND=openvino       # +5%뿐이라 미채택. 쓰려면 openvino 별도 설치 필요
+    AI_INFER_STRIDE=3         # 도로 씬 번호판 커버 46%로 붕괴 — 프라이버시 사고라 미채택
+    AI_BOX_PAD=0.10           # 스킵 프레임 재사용 박스 확장 비율 (stride>1일 때만 의미)
 """
 
 import argparse
 import json
+import os
 import resource
 import subprocess
 import sys
@@ -30,6 +36,11 @@ PLATE_MODEL = ("morsetechlab/yolov11-license-plate-detection", "license-plate-fi
 # 번호판은 미실험이라 0.25 유지.
 FACE_CONF = 0.05
 PLATE_CONF = 0.25
+
+# MSG-207: 추론 백엔드·프레임 스트라이드. 실측 결과 두 노브 모두 미채택 — 기본값이 정본.
+BACKEND = os.environ.get("AI_BACKEND", "torch")             # torch | openvino
+INFER_STRIDE = int(os.environ.get("AI_INFER_STRIDE", "1"))  # k프레임마다 1회 추론
+BOX_PAD = float(os.environ.get("AI_BOX_PAD", "0.10"))       # 재사용 박스 확장 비율
 
 
 class Stage:
@@ -64,15 +75,26 @@ def peak_memory_mb():
 	return round(peak / (1024 if sys.platform == "linux" else 1024 * 1024), 1)
 
 
-def load_models(device):
+def load_models(device, backend=None):
 	from huggingface_hub import hf_hub_download
 	from ultralytics import YOLO
 
-	face = YOLO(hf_hub_download(*FACE_MODEL))
-	plate = YOLO(hf_hub_download(*PLATE_MODEL))
-	face.to(device)
-	plate.to(device)
-	return face, plate
+	backend = backend or BACKEND
+
+	def load(repo, filename):
+		pt = hf_hub_download(repo, filename)
+		if backend == "openvino":
+			# MSG-207: 같은 가중치의 OpenVINO 변환 — x86 CPU에서 추론 가속.
+			# export 산출물은 가중치 옆(HF 캐시)에 남아 hf-cache 볼륨과 함께 재시작에도 유지된다.
+			ov = Path(pt).with_name(Path(pt).stem + "_openvino_model")
+			if not ov.exists():
+				YOLO(pt).export(format="openvino")
+			return YOLO(str(ov), task="detect")
+		model = YOLO(pt)
+		model.to(device)
+		return model
+
+	return load(*FACE_MODEL), load(*PLATE_MODEL)
 
 
 def blur_boxes(frame, boxes):
@@ -92,6 +114,16 @@ def to_boxes(result, width, height):
 	for box in result.boxes.xyxy.tolist():
 		x1, y1, x2, y2 = (int(v) for v in box)
 		out.append((max(0, x1), max(0, y1), min(width, x2), min(height, y2)))
+	return out
+
+
+def pad_boxes(boxes, width, height, pad=None):
+	"""스킵 프레임에 재사용할 박스는 프레임 간 이동을 흡수하도록 확장한다 (MSG-207)."""
+	pad = BOX_PAD if pad is None else pad
+	out = []
+	for x1, y1, x2, y2 in boxes:
+		dx, dy = int((x2 - x1) * pad), int((y2 - y1) * pad)
+		out.append((max(0, x1 - dx), max(0, y1 - dy), min(width, x2 + dx), min(height, y2 + dy)))
 	return out
 
 
@@ -116,6 +148,8 @@ def run(path, device, out_path):
 
 	with stage.track("model_load"):
 		face, plate = load_models(device)
+	if BACKEND == "openvino":
+		device = "cpu(openvino)"
 
 	cap = cv2.VideoCapture(str(path))
 	if not cap.isOpened():
@@ -127,6 +161,7 @@ def run(path, device, out_path):
 	writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
 
 	frames = face_hits = plate_hits = 0
+	reused = []
 	while True:
 		with stage.track("decode"):
 			ok, frame = cap.read()
@@ -134,17 +169,24 @@ def run(path, device, out_path):
 			break
 		frames += 1
 
-		with stage.track("infer_face"):
-			fr = face.predict(frame, conf=FACE_CONF, verbose=False)[0]
-		with stage.track("infer_plate"):
-			pr = plate.predict(frame, conf=PLATE_CONF, verbose=False)[0]
+		if (frames - 1) % INFER_STRIDE == 0:
+			with stage.track("infer_face"):
+				fr = face.predict(frame, conf=FACE_CONF, verbose=False)[0]
+			with stage.track("infer_plate"):
+				pr = plate.predict(frame, conf=PLATE_CONF, verbose=False)[0]
 
-		fb, pb = to_boxes(fr, width, height), to_boxes(pr, width, height)
-		face_hits += len(fb)
-		plate_hits += len(pb)
+			fb, pb = to_boxes(fr, width, height), to_boxes(pr, width, height)
+			face_hits += len(fb)
+			plate_hits += len(pb)
+			boxes = fb + pb
+			reused = pad_boxes(boxes, width, height)
+		else:
+			# MSG-207: 스킵 프레임은 직전 추론 박스의 확장본을 재사용한다.
+			# 커버리지 근거는 results/MSG-207-report.md (stride·pad 시뮬레이션)
+			boxes = reused
 
 		with stage.track("mask"):
-			frame = blur_boxes(frame, fb + pb)
+			frame = blur_boxes(frame, boxes)
 		with stage.track("encode"):
 			writer.write(frame)
 
@@ -159,6 +201,8 @@ def run(path, device, out_path):
 	return {
 		"input": str(path),
 		"device": device,
+		"backend": BACKEND,
+		"infer_stride": INFER_STRIDE,
 		"resolution": f"{width}x{height}",
 		"frames": frames,
 		"video_sec": round(duration, 2),
@@ -193,6 +237,8 @@ def smoke():
 		assert len(report["highlights"]) <= 3, "하이라이트는 최대 3구간 (MSG-141)"
 		assert report["highlights"], "5초 이상인데 하이라이트 0개 (MSG-159 폴백 미작동)"
 		assert set(report["stages"]) >= {"decode", "infer_face", "encode"}, "단계 계측 누락"
+		assert pad_boxes([(10, 10, 20, 20)], 100, 100, pad=0.1) == [(9, 9, 21, 21)], "박스 확장 오계산"
+		assert pad_boxes([(0, 0, 100, 100)], 100, 100, pad=0.2) == [(0, 0, 100, 100)], "확장이 프레임을 벗어남"
 		print(json.dumps(report, indent=2, ensure_ascii=False))
 		print("\nsmoke OK")
 

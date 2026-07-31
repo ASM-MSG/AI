@@ -6,3 +6,4 @@ fastapi>=0.115.0
 uvicorn>=0.32.0
 python-multipart>=0.0.18
 httpx>=0.27.0  # server.py --smoke (TestClient)
+# openvino는 미채택 (+5%뿐, results/MSG-207-report.md) — AI_BACKEND=openvino 실험 시에만 별도 설치
