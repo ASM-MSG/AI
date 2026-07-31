@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 # (repo, 가중치 파일)을 못박는다. 번호판 레포는 n/s/m/l/x 5종을 같은 길이 이름으로
 # 올려둬서 파일명을 추측하면 조용히 large를 집는다 — nano를 명시할 것.
@@ -104,7 +105,9 @@ def blur_boxes(frame, boxes):
 		if roi.size == 0:
 			continue
 		# 커널을 ROI 크기에 비례시켜야 작은 얼굴도 실제로 뭉개진다.
-		k = max(3, (min(roi.shape[:2]) // 4) | 1)
+		# 기준은 반드시 **긴 변**이다 — 짧은 변으로 잡으면 번호판처럼 납작한 박스에서
+		# 커널이 글자 굵기보다 작아져 "가린 척"만 하고 번호가 그대로 읽힌다 (MSG-280).
+		k = max(3, (max(roi.shape[:2]) // 4) | 1)
 		frame[y1:y2, x1:x2] = cv2.GaussianBlur(roi, (k, k), 0)
 	return frame
 
@@ -239,6 +242,15 @@ def smoke():
 		assert set(report["stages"]) >= {"decode", "infer_face", "encode"}, "단계 계측 누락"
 		assert pad_boxes([(10, 10, 20, 20)], 100, 100, pad=0.1) == [(9, 9, 21, 21)], "박스 확장 오계산"
 		assert pad_boxes([(0, 0, 100, 100)], 100, 100, pad=0.2) == [(0, 0, 100, 100)], "확장이 프레임을 벗어남"
+
+		# MSG-280: 납작한 박스가 실제로 뭉개지는지. 합성 영상엔 검출 대상이 없어 blur_boxes가
+		# 안 타므로 직접 태운다. 30×120에 15px 폭 블록 = 번호판 글자 굵기 근사.
+		# 실측 잔여 std: 짧은 변 기준 0.91배(글자 읽힘) / 긴 변 기준 0.65배 — 사이인 0.8을 문턱으로.
+		strip = np.zeros((30, 120, 3), dtype=np.uint8)
+		for i in range(0, 120, 30):
+			strip[:, i:i + 15] = 255
+		assert blur_boxes(strip.copy(), [(0, 0, 120, 30)]).std() < 0.8 * strip.std(), \
+			"납작한 박스에 블러가 약하다 — 커널이 짧은 변 기준인지 확인 (MSG-280)"
 		print(json.dumps(report, indent=2, ensure_ascii=False))
 		print("\nsmoke OK")
 
