@@ -1,0 +1,54 @@
+name: CD (dev)
+
+# MSG-282 — main push -> dev EC2에 AI 서버 자동 배포.
+#
+# 배포 로직은 여기 쓰지 않고 scripts/ec2-deploy.sh를 그대로 실행한다.
+# 손으로 돌리던 경로와 같아야 "CD에서만 되는" 상태가 생기지 않는다.
+#
+# 필요한 설정 (AI 레포 Settings):
+#   Secrets:   DEV_EC2_HOST / DEV_EC2_USER / DEV_EC2_SSH_KEY  — BE 레포와 같은 값 (현재 같은 EC2)
+#   Variables: DEPLOY_ENABLED=true                            — 없으면 skip (등록 전 빨간불 방지)
+#
+# AI 전용 인스턴스로 분리하게 되면 secrets 값만 갈면 되고 이 파일은 그대로다.
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+# 배포가 겹치면 컨테이너 교체가 서로를 밟는다 — 뒤엣것만 남기고 앞엣것은 취소.
+concurrency:
+  group: cd-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy-dev:
+    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload deploy script
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEV_EC2_HOST }}
+          username: ${{ secrets.DEV_EC2_USER }}
+          key: ${{ secrets.DEV_EC2_SSH_KEY }}
+          source: scripts/ec2-deploy.sh
+          target: /home/${{ secrets.DEV_EC2_USER }}
+          strip_components: 1
+
+      # 스크립트가 /health 대기 + 실영상 E2E까지 하고 실패 시 exit 1을 낸다.
+      # BE MSG-129 교훈: `systemctl restart`처럼 기동을 지시만 하고 0을 반환하면
+      # 앱이 직후 죽어도 CD는 초록불이다(실제로 32시간 크래시 루프가 그렇게 묻혔다).
+      # 여기서는 "블러가 실제로 돌아간 영상"까지 확인해야 성공으로 친다.
+      - name: Deploy and verify
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEV_EC2_HOST }}
+          username: ${{ secrets.DEV_EC2_USER }}
+          key: ${{ secrets.DEV_EC2_SSH_KEY }}
+          # 첫 빌드는 torch(CPU wheel) 설치로 10분을 넘긴다. 레이어 캐시가 살아 있으면
+          # 코드 COPY만 다시 타서 1~2분. 뒤에 붙는 E2E가 3~4분.
+          command_timeout: 40m
+          script: bash ec2-deploy.sh

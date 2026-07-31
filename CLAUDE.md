@@ -8,7 +8,10 @@ FillMap의 AI Highlight-Blur 서버. 얼굴·번호판 자동 블러 + 하이라
 백엔드(Spring Boot, [ASM-MSG/BE](https://github.com/ASM-MSG/BE))와는 **HTTP로만 통신하는 별도 프로세스**다.
 
 - 스택: Python · ultralytics(YOLOv11n) · PySceneDetect · ffmpeg · (예정) FastAPI
-- 실행 환경: dev EC2에 Docker 컨테이너 상시 서버 — BE 레포 `docs/MSG-143.md` (ADR) 확정
+- 실행 환경: dev EC2에 Docker 컨테이너 상시 서버 — BE 레포 `docs/MSG-143.md` (ADR) 확정.
+  현재 BE와 같은 인스턴스에 산다(안정화 후 AI 전용으로 분리 예정)
+- 배포: **`main` 머지 시 자동**(MSG-282, `.github/workflows/cd-dev.yml`). 실체는
+  `scripts/ec2-deploy.sh`이고 실영상 E2E까지 통과해야 초록불이다
 - 모델 선정 근거: BE 레포 `docs/MSG-144.md`
 - 측정 데이터: `results/MSG-142-report.md` — 처리 시간·메모리·발견된 문제 전부 여기
 
