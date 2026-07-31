@@ -1,0 +1,92 @@
+{
+  "ticket": "MSG-280",
+  "note": "정확도(블러 강도) 검증. 시간 수치는 macOS(mps) 상대 비교용이라 절대값은 무효 — 성능 판단 근거로 쓰지 말 것.",
+  "device": "mps (macOS)",
+  "samples": {
+    "kr-plates.mp4": {
+      "source": "youtube iM58pqINYqU 00:20-00:50",
+      "desc": "한국 블랙박스 주간 주행, 번호판 식별용"
+    },
+    "kr-faces.mp4": {
+      "source": "youtube MIRjBtxgEgs 10:00-10:30",
+      "desc": "서울 명동 거리 보행"
+    },
+    "plates.mp4": {
+      "source": "pexels 854671",
+      "desc": "기존 서양 도로 샘플 (MSG-142부터 사용)"
+    }
+  },
+  "kernel": {
+    "before": "max(3, (min(w,h) // 4) | 1)",
+    "after": "max(3, (max(w,h) // 4) | 1)",
+    "observed": {
+      "kr-plates 111x32px": {
+        "before": 9,
+        "after": 27
+      },
+      "plates 111x57px": {
+        "before": 15,
+        "after": 27
+      }
+    }
+  },
+  "runs": {
+    "kr-plates": {
+      "before": {
+        "detections": {
+          "face": 185,
+          "plate": 628
+        },
+        "mask_sec": {
+          "sec": 0.019,
+          "pct": 0.1
+        },
+        "wall_sec": 22.05
+      },
+      "after": {
+        "detections": {
+          "face": 185,
+          "plate": 628
+        },
+        "mask_sec": {
+          "sec": 0.065,
+          "pct": 0.3
+        },
+        "wall_sec": 22.14
+      }
+    },
+    "kr-faces": {
+      "before": {
+        "detections": {
+          "face": 5985,
+          "plate": 145
+        },
+        "mask_sec": {
+          "sec": 0.134,
+          "pct": 0.5
+        },
+        "wall_sec": 27.19
+      },
+      "after": {
+        "detections": {
+          "face": 5985,
+          "plate": 145
+        },
+        "mask_sec": {
+          "sec": 0.263,
+          "pct": 1.0
+        },
+        "wall_sec": 26.75
+      }
+    },
+    "plates": {
+      "after": {
+        "detections": {
+          "face": 1625,
+          "plate": 702
+        },
+        "wall_sec": 19.53
+      }
+    }
+  }
+}
