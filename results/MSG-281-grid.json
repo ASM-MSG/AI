@@ -1,0 +1,120 @@
+{
+  "videos": [
+    "samples/crowd.mp4",
+    "samples/plates.mp4",
+    "samples/kr-faces.mp4",
+    "samples/kr-plates.mp4"
+  ],
+  "frames_per_video": 30,
+  "device": "mps",
+  "gt_imgsz": 640,
+  "note": "recall은 imgsz 640 검출을 기준으로 한 상대 지표(640이 놓친 것은 안 보인다). ms/frame은 EC2에서만 유효. 최종 판단은 주석 프레임 육안 검증.",
+  "results": {
+    "face": [
+      {
+        "imgsz": 640,
+        "detections": 680,
+        "recall_vs_640": {
+          "small": 1.0,
+          "medium": 1.0,
+          "large": 1.0,
+          "overall": 1.0,
+          "gt_counts": {
+            "small": 236,
+            "medium": 289,
+            "large": 155
+          }
+        },
+        "ms_per_frame": 14.4,
+        "speedup": 1.0
+      },
+      {
+        "imgsz": 480,
+        "detections": 651,
+        "recall_vs_640": {
+          "small": 0.356,
+          "medium": 0.872,
+          "large": 0.987,
+          "overall": 0.719,
+          "gt_counts": {
+            "small": 236,
+            "medium": 289,
+            "large": 155
+          }
+        },
+        "ms_per_frame": 10.3,
+        "speedup": 1.4
+      },
+      {
+        "imgsz": 320,
+        "detections": 544,
+        "recall_vs_640": {
+          "small": 0.085,
+          "medium": 0.64,
+          "large": 0.948,
+          "overall": 0.518,
+          "gt_counts": {
+            "small": 236,
+            "medium": 289,
+            "large": 155
+          }
+        },
+        "ms_per_frame": 9.8,
+        "speedup": 1.48
+      }
+    ],
+    "plate": [
+      {
+        "imgsz": 640,
+        "detections": 52,
+        "recall_vs_640": {
+          "small": null,
+          "medium": 1.0,
+          "large": null,
+          "overall": 1.0,
+          "gt_counts": {
+            "small": 0,
+            "medium": 52,
+            "large": 0
+          }
+        },
+        "ms_per_frame": 6.3,
+        "speedup": 1.0
+      },
+      {
+        "imgsz": 480,
+        "detections": 43,
+        "recall_vs_640": {
+          "small": null,
+          "medium": 0.615,
+          "large": null,
+          "overall": 0.615,
+          "gt_counts": {
+            "small": 0,
+            "medium": 52,
+            "large": 0
+          }
+        },
+        "ms_per_frame": 6.0,
+        "speedup": 1.05
+      },
+      {
+        "imgsz": 320,
+        "detections": 13,
+        "recall_vs_640": {
+          "small": null,
+          "medium": 0.038,
+          "large": null,
+          "overall": 0.038,
+          "gt_counts": {
+            "small": 0,
+            "medium": 52,
+            "large": 0
+          }
+        },
+        "ms_per_frame": 5.3,
+        "speedup": 1.18
+      }
+    ]
+  }
+}
