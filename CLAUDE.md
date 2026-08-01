@@ -118,6 +118,10 @@ release/{버전}
   MSG-151(부하 측정 — **Kafka 불필요** 판단, 근거는 `results/MSG-151-report.md`) ·
   MSG-280(번호판 블러 강도 수정 — 커널 긴 변 기준, 근거는 `results/MSG-280-report.md`) ·
   MSG-282(dev CD — main 머지 시 자동 배포) ·
-  MSG-281(imgsz 하향 **기각** — recall 붕괴, 근거는 `results/MSG-281-report.md`)
-- 남은 것: 감지 건수(얼굴 N·번호판 N) 응답 추가(MSG-140 잔여 완료 조건) ·
+  MSG-281(imgsz 하향 **기각** — recall 붕괴, 근거는 `results/MSG-281-report.md`) ·
+  MSG-284(무의미 영상 프리체크 — grayscale std 중앙값 10 미만 탈락, 근거는 `results/MSG-284-report.md`.
+  **BE 대응(MSG-286) 전까지 탈락 잡은 BE에서 PT30M 뒤에야 FAILED로 수렴한다** — 409를 "완료 전"으로
+  해석해 재시도하기 때문. 큐 절감은 유효하고 손해는 그 사용자의 대기 시간뿐이다)
+- 남은 것: MSG-284 dev EC2 실측(판정 ≤2초 · 탈락 잡 ≤5초)은 배포 후 기록 ·
+  감지 건수(얼굴 N·번호판 N) 응답 추가(MSG-140 잔여 완료 조건) ·
   AI 처리량 확장은 시간당 20건+ 지속 시 재평가(MSG-151 트리거)
