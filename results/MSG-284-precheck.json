@@ -1,0 +1,194 @@
+{
+  "frames_per_video": 20,
+  "bright_level": 64,
+  "std_threshold": 10.0,
+  "note": "영상 지표는 프레임별 값의 중앙값. 전부 '낮을수록 탈락' 방향이다. DIM은 crowd 선형 감쇠본으로 판정 정답이 없는 참고군.",
+  "rows": [
+    {
+      "video": "normal.mp4",
+      "group": "PASS",
+      "mean": 109.44,
+      "std": 66.14,
+      "p99": 253.0,
+      "bright_pct": 73.16,
+      "lap_var": 129.52,
+      "entropy": 7.6,
+      "verdict": "통과"
+    },
+    {
+      "video": "crowd.mp4",
+      "group": "PASS",
+      "mean": 87.54,
+      "std": 57.46,
+      "p99": 253.0,
+      "bright_pct": 58.38,
+      "lap_var": 6.52,
+      "entropy": 7.34,
+      "verdict": "통과"
+    },
+    {
+      "video": "plates.mp4",
+      "group": "PASS",
+      "mean": 121.99,
+      "std": 51.33,
+      "p99": 247.0,
+      "bright_pct": 93.82,
+      "lap_var": 72.3,
+      "entropy": 7.07,
+      "verdict": "통과"
+    },
+    {
+      "video": "hires.mp4",
+      "group": "PASS",
+      "mean": 129.01,
+      "std": 68.29,
+      "p99": 241.0,
+      "bright_pct": 75.84,
+      "lap_var": 120.46,
+      "entropy": 7.8,
+      "verdict": "통과"
+    },
+    {
+      "video": "kr-faces.mp4",
+      "group": "PASS",
+      "mean": 128.81,
+      "std": 56.45,
+      "p99": 249.5,
+      "bright_pct": 85.56,
+      "lap_var": 366.2,
+      "entropy": 7.65,
+      "verdict": "통과"
+    },
+    {
+      "video": "kr-plates.mp4",
+      "group": "PASS",
+      "mean": 94.49,
+      "std": 75.28,
+      "p99": 249.0,
+      "bright_pct": 52.16,
+      "lap_var": 209.91,
+      "entropy": 7.2,
+      "verdict": "통과"
+    },
+    {
+      "video": "night-street.mp4",
+      "group": "PASS",
+      "mean": 82.62,
+      "std": 53.21,
+      "p99": 251.5,
+      "bright_pct": 55.17,
+      "lap_var": 148.72,
+      "entropy": 7.36,
+      "verdict": "통과"
+    },
+    {
+      "video": "night-drive.mp4",
+      "group": "PASS",
+      "mean": 53.85,
+      "std": 38.57,
+      "p99": 170.5,
+      "bright_pct": 34.5,
+      "lap_var": 14.77,
+      "entropy": 6.99,
+      "verdict": "통과"
+    },
+    {
+      "video": "night-dark.mp4",
+      "group": "PASS",
+      "mean": 37.25,
+      "std": 36.69,
+      "p99": 125.0,
+      "bright_pct": 24.87,
+      "lap_var": 64.28,
+      "entropy": 6.28,
+      "verdict": "통과"
+    },
+    {
+      "video": "dark-covered.mp4",
+      "group": "FAIL",
+      "mean": 8.28,
+      "std": 3.18,
+      "p99": 18.0,
+      "bright_pct": 0.0,
+      "lap_var": 179.31,
+      "entropy": 3.58,
+      "verdict": "탈락"
+    },
+    {
+      "video": "dim-50.mp4",
+      "group": "DIM",
+      "mean": 33.78,
+      "std": 28.51,
+      "p99": 116.0,
+      "bright_pct": 12.62,
+      "lap_var": 2.97,
+      "entropy": 6.28,
+      "verdict": "통과"
+    },
+    {
+      "video": "dim-25.mp4",
+      "group": "DIM",
+      "mean": 10.24,
+      "std": 12.06,
+      "p99": 48.0,
+      "bright_pct": 0.0,
+      "lap_var": 1.12,
+      "entropy": 4.64,
+      "verdict": "통과"
+    },
+    {
+      "video": "dim-10.mp4",
+      "group": "DIM",
+      "mean": 2.28,
+      "std": 2.9,
+      "p99": 12.0,
+      "bright_pct": 0.0,
+      "lap_var": 0.35,
+      "entropy": 2.87,
+      "verdict": "탈락"
+    },
+    {
+      "video": "dim-05.mp4",
+      "group": "DIM",
+      "mean": 1.0,
+      "std": 2.08,
+      "p99": 10.0,
+      "bright_pct": 0.0,
+      "lap_var": 0.19,
+      "entropy": 1.83,
+      "verdict": "탈락"
+    }
+  ],
+  "separation": {
+    "mean": {
+      "pass_min": 37.25,
+      "fail_max": 8.28,
+      "margin_x": 4.5
+    },
+    "std": {
+      "pass_min": 36.69,
+      "fail_max": 3.18,
+      "margin_x": 11.54
+    },
+    "p99": {
+      "pass_min": 125.0,
+      "fail_max": 18.0,
+      "margin_x": 6.94
+    },
+    "bright_pct": {
+      "pass_min": 24.87,
+      "fail_max": 0.0,
+      "margin_x": "inf"
+    },
+    "lap_var": {
+      "pass_min": 6.52,
+      "fail_max": 179.31,
+      "margin_x": 0.04
+    },
+    "entropy": {
+      "pass_min": 6.28,
+      "fail_max": 3.58,
+      "margin_x": 1.75
+    }
+  }
+}
