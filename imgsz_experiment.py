@@ -29,8 +29,8 @@ from pathlib import Path
 
 import cv2
 
-from bench import FACE_CONF, FACE_MODEL, PLATE_CONF, PLATE_MODEL, make_smoke_video, to_boxes
-from face_experiment import IOU_MATCH, iou, sample_frames
+from bench import FACE_CONF, FACE_MODEL, PLATE_CONF, PLATE_MODEL, make_smoke_video, sample_frames, to_boxes
+from face_experiment import IOU_MATCH, iou
 
 # 비교할 해상도. **첫 값이 현재 파이프라인 설정이자 pseudo-GT 기준**이다 — 순서를 바꾸지 말 것.
 IMGSZ_GRID = [640, 480, 320]

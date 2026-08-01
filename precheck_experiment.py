@@ -25,11 +25,11 @@ import json
 import tempfile
 from pathlib import Path
 
-import cv2
 import numpy as np
 
-from bench import make_smoke_video
-from face_experiment import sample_frames
+# 지표·임계값 정본은 bench.py다 — 실험이 검증하는 대상이 곧 배포되는 코드여야
+# results/MSG-284-report.md가 근거로 유효하다 (MSG-284).
+from bench import BRIGHT_LEVEL, PRECHECK_STD_THRESHOLD, frame_metrics, make_smoke_video, video_metrics
 
 # 영상 분류. **PASS는 반드시 통과해야 하고 FAIL은 반드시 탈락해야 한다** — 임계값은 이 둘 사이.
 # DIM은 crowd를 선형 감쇠한 저노출 스펙트럼으로, 경계가 어디쯤인지 연속적으로 보기 위한 참고군이다
@@ -45,45 +45,10 @@ PASS_VIDEOS = [
 FAIL_VIDEOS = ["samples/dark-covered.mp4"]
 DIM_VIDEOS = ["samples/dim-50.mp4", "samples/dim-25.mp4", "samples/dim-10.mp4", "samples/dim-05.mp4"]
 
-# 밝은 픽셀로 칠 문턱. 가로등·간판은 이보다 훨씬 밝고, 렌즈 가림엔 이만한 픽셀이 거의 없다.
-BRIGHT_LEVEL = 64
-
-# 채택 임계값 — **std(대비) 10 미만이면 탈락**. 실측 근거는 results/MSG-284-report.md.
-# PASS 최소 36.69(night-dark) / FAIL 최대 3.18(dark-covered) 사이. PASS 쪽으로 3.7배,
-# FAIL 쪽으로 3.1배 여유라 양쪽 다 안전하다.
-# bright_pct는 완전 분리로 마진이 더 컸지만 BRIGHT_LEVEL이라는 자의적 상수가 하나 더 필요하다 —
-# std는 파라미터가 없고 "명암 차이가 있다 = 뭔가 보인다"로 의미가 직접적이라 이쪽을 택했다.
-STD_THRESHOLD = 10.0
-
+# 리포트 표(results/MSG-284-report.md)가 20장 측정이라 `python precheck_experiment.py`로
+# 그대로 재현되도록 기본값을 유지한다. 배포 파이프라인은 10장(bench.PRECHECK_FRAMES)이지만
+# std가 20/10/5장에서 ±0.2% 이내라 판정은 동일하다.
 FRAMES = 20
-
-
-def frame_metrics(frame):
-	"""프레임 하나의 지표. 전부 grayscale 기준 — 색은 판정에 쓰지 않는다."""
-	gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-	hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
-	p = hist / hist.sum()
-	nz = p[p > 0]
-	return {
-		"mean": float(gray.mean()),
-		"std": float(gray.std()),
-		"p99": float(np.percentile(gray, 99)),
-		# 밝은 픽셀 비율(%). 야간 거리와 렌즈 가림을 가르는 핵심 후보 —
-		# 밤이어도 조명은 있고, 가려진 렌즈엔 없다.
-		"bright_pct": float(100 * (gray > BRIGHT_LEVEL).mean()),
-		# 라플라시안 분산 = 엣지 강도. 디테일이 없으면(가려짐·초점 이탈) 낮다.
-		"lap_var": float(cv2.Laplacian(gray, cv2.CV_64F).var()),
-		# 히스토그램 엔트로피(bit). 한 밝기에 몰려 있으면 낮다.
-		"entropy": float(-(nz * np.log2(nz)).sum()),
-	}
-
-
-def video_metrics(path, n_frames):
-	"""영상 단위 지표. 프레임별 값의 **중앙값**을 쓴다 — 촬영 시작 직후만 가려진 영상이
-	전체 탈락하지 않도록(오탐 방지). 소수 프레임이 아니라 영상 전반이 어두워야 탈락이다."""
-	frames = sample_frames(path, n_frames)
-	per_frame = [frame_metrics(f) for _, f in frames]
-	return {k: round(float(np.median([m[k] for m in per_frame])), 2) for k in per_frame[0]}
 
 
 def separation(rows, key):
@@ -105,7 +70,7 @@ def run(videos_by_group, n_frames):
 				continue
 			print(f"[{group}] {v} ...", flush=True)
 			m = video_metrics(v, n_frames)
-			verdict = "통과" if m["std"] >= STD_THRESHOLD else "탈락"
+			verdict = "통과" if m["std"] >= PRECHECK_STD_THRESHOLD else "탈락"
 			rows.append({"video": Path(v).name, "group": group, **m, "verdict": verdict})
 
 	metrics = [k for k in rows[0] if k not in ("video", "group", "verdict")]
@@ -115,7 +80,7 @@ def run(videos_by_group, n_frames):
 	return {
 		"frames_per_video": n_frames,
 		"bright_level": BRIGHT_LEVEL,
-		"std_threshold": STD_THRESHOLD,
+		"std_threshold": PRECHECK_STD_THRESHOLD,
 		"note": "영상 지표는 프레임별 값의 중앙값. 전부 '낮을수록 탈락' 방향이다. "
 			"DIM은 crowd 선형 감쇠본으로 판정 정답이 없는 참고군.",
 		"rows": rows,
@@ -170,7 +135,8 @@ def smoke():
 	assert lm["mean"] < 10, "가로등 근사가 어둡지 않다 — 테스트 설계 오류"
 
 	# 채택 임계값이 극단 입력에서 방향을 지키는지 — 단색은 탈락, 명암이 있으면 통과
-	assert bm["std"] < STD_THRESHOLD and wm["std"] < STD_THRESHOLD, "단색은 대비가 0이라 탈락이어야 한다"
+	assert bm["std"] < PRECHECK_STD_THRESHOLD and wm["std"] < PRECHECK_STD_THRESHOLD, \
+		"단색은 대비가 0이라 탈락이어야 한다"
 
 	with tempfile.TemporaryDirectory() as tmp:
 		src = Path(tmp) / "in.mp4"

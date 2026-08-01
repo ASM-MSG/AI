@@ -38,6 +38,16 @@ PLATE_MODEL = ("morsetechlab/yolov11-license-plate-detection", "license-plate-fi
 FACE_CONF = 0.05
 PLATE_CONF = 0.25
 
+# MSG-284: 프리체크 — grayscale std 중앙값이 이 값 미만이면 탈락(암흑·렌즈 가림).
+# 근거는 results/MSG-284-report.md — PASS 최소 36.69(night-dark) / FAIL 최대 3.18(dark-covered) 사이.
+# 오탐(정상 영상 탈락)이 사고이고 미탐은 3분 낭비로 끝난다 → PASS 쪽에 넉넉히 붙였다.
+PRECHECK_STD_THRESHOLD = 10.0
+PRECHECK_FRAMES = 10   # 20/10/5장에서 std가 ±0.2% 이내라 20장은 낭비고, 5장은 중앙값 표본이 너무 작다
+
+# 밝은 픽셀로 칠 문턱. 판정에는 안 쓰고 bright_pct 로깅용이다 —
+# "몇 이상을 밝다고 칠 것인가"가 자의적이라 임계값 지표로는 채택하지 않았다 (MSG-284 리포트)
+BRIGHT_LEVEL = 64
+
 # MSG-207: 추론 백엔드·프레임 스트라이드. 실측 결과 두 노브 모두 미채택 — 기본값이 정본.
 BACKEND = os.environ.get("AI_BACKEND", "torch")             # torch | openvino
 INFER_STRIDE = int(os.environ.get("AI_INFER_STRIDE", "1"))  # k프레임마다 1회 추론
@@ -145,6 +155,86 @@ def detect_highlights(path, duration, stage):
 	return [[round(s.get_seconds(), 2), round(e.get_seconds(), 2)] for s, e in ranked[:3]]
 
 
+def sample_frames(path, n):
+	"""영상에서 n프레임을 균등 간격으로 뽑는다."""
+	cap = cv2.VideoCapture(str(path))
+	if not cap.isOpened():
+		raise SystemExit(f"영상을 열 수 없음: {path}")
+	total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+	out = []
+	for i in range(n):
+		cap.set(cv2.CAP_PROP_POS_FRAMES, int(i * total / n))
+		ok, frame = cap.read()
+		if ok:
+			out.append((int(i * total / n), frame))
+	cap.release()
+	return out
+
+
+def frame_metrics(frame):
+	"""프레임 하나의 지표. 전부 grayscale 기준 — 색은 판정에 쓰지 않는다.
+
+	판정은 std만 쓰지만 나머지도 남긴다 — 배포 후 실제 업로드로 임계값을 사후 조정할
+	근거이고(MSG-284 FR-7), 10프레임 계산이라 비용이 무시할 수준이다.
+	"""
+	gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+	hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
+	p = hist / hist.sum()
+	nz = p[p > 0]
+	return {
+		"mean": float(gray.mean()),
+		"std": float(gray.std()),
+		"p99": float(np.percentile(gray, 99)),
+		# 밝은 픽셀 비율(%). 밤이어도 조명은 있고, 가려진 렌즈엔 없다.
+		"bright_pct": float(100 * (gray > BRIGHT_LEVEL).mean()),
+		# 라플라시안 분산 = 엣지 강도. **판정에 쓰면 안 된다** — 센서 노이즈를 엣지로 오인해
+		# 방향이 뒤집힌다(PASS 6.52 < FAIL 179.31, results/MSG-284-report.md)
+		"lap_var": float(cv2.Laplacian(gray, cv2.CV_64F).var()),
+		# 히스토그램 엔트로피(bit). 한 밝기에 몰려 있으면 낮다.
+		"entropy": float(-(nz * np.log2(nz)).sum()),
+	}
+
+
+def median_metrics(frames):
+	"""프레임별 지표의 **중앙값**. 평균이 아닌 이유는 오탐 방지다 — 촬영 시작 직후만 가려진
+	영상이 전체 탈락하면 안 된다. 소수 프레임이 아니라 영상 전반이 어두워야 탈락이다."""
+	per_frame = [frame_metrics(f) for _, f in frames]
+	return {k: round(float(np.median([m[k] for m in per_frame])), 2) for k in per_frame[0]}
+
+
+def video_metrics(path, n_frames):
+	"""영상 단위 지표. 실험 스크립트가 쓰는 경로라 몇 장 실패는 관대하게 넘긴다."""
+	frames = sample_frames(path, n_frames)
+	if not frames:
+		# 없으면 IndexError로 새는데, 원인이 안 드러나는 실패는 FR-8 취지에 어긋난다
+		raise SystemExit(f"프레임을 읽을 수 없음: {path}")
+	return median_metrics(frames)
+
+
+def precheck(path, n_frames=PRECHECK_FRAMES):
+	"""MSG-284: 추론 전 무의미 영상(암흑·렌즈 가림) 판정. 규칙 정본은 results/MSG-284-report.md.
+
+	블러와 정확도 방향이 반대다 — **오탐이 사고, 미탐은 3분 낭비**라 애매하면 통과다.
+	reason의 코드 접두어(too_dark)는 BE 매핑용으로 고정, 콜론 뒤 수치는 진단용이라 형식이 바뀔 수 있다.
+
+	ponytail: 픽셀 통계 단일 지표 — 내용 기반 판정(책상·벽만 찍힌 밝은 영상)이 필요해지면 CLIP zero-shot (PRD §8)
+	"""
+	frames = sample_frames(path, n_frames)
+	if len(frames) * 2 < n_frames:
+		# 중앙값으로 판정하므로 표본이 절반 미만이면 판정 근거 자체가 부족하다.
+		# 손상된 입력을 "너무 어두움"으로 오진하지 않고 기존 실패 경로로 보낸다 (FR-8).
+		# '전부 요구'는 하지 않는다 — 메타데이터가 부정확한 정상 영상까지 FAILED가 되면 그게 오탐이다.
+		raise SystemExit(f"프레임 디코딩 실패: {path} — {n_frames}장 중 {len(frames)}장만 읽힘")
+	metrics = median_metrics(frames)
+	std = metrics["std"]
+	passed = std >= PRECHECK_STD_THRESHOLD
+	return {
+		"passed": passed,
+		"reason": None if passed else f"too_dark: std {std:.2f} < {PRECHECK_STD_THRESHOLD}",
+		"metrics": metrics,
+	}
+
+
 def run(path, device, out_path):
 	stage = Stage()
 	wall_start = time.perf_counter()
@@ -229,6 +319,21 @@ def make_smoke_video(path, seconds=6, fps=30, size=(640, 480)):
 	)
 
 
+def make_dark_video(path, dark_sec=6, bright_sec=0, size=(640, 480), fps=30):
+	"""검은 화면 dark_sec초 뒤에 컬러바 bright_sec초를 이어 붙인다 (MSG-284 프리체크 검증용).
+
+	bright_sec=0이면 검은 화면 단독 = 렌즈 가림 근사라 **탈락**해야 하고,
+	bright_sec>0은 "촬영 시작 직후에만 가려진 영상"이라 중앙값 규칙이면 **통과**해야 한다.
+	"""
+	wh = f"{size[0]}x{size[1]}"
+	args = ["-f", "lavfi", "-i", f"color=c=black:s={wh}:r={fps}:d={dark_sec}"]
+	if bright_sec:
+		args += ["-f", "lavfi", "-i", f"testsrc=duration={bright_sec}:size={wh}:rate={fps}",
+			"-filter_complex", "[0:v][1:v]concat=n=2:v=1"]
+	subprocess.run(["ffmpeg", "-y", *args, "-pix_fmt", "yuv420p", str(path)],
+		check=True, capture_output=True)
+
+
 def smoke():
 	with tempfile.TemporaryDirectory() as tmp:
 		src, dst = Path(tmp) / "in.mp4", Path(tmp) / "out.mp4"
@@ -251,7 +356,53 @@ def smoke():
 			strip[:, i:i + 15] = 255
 		assert blur_boxes(strip.copy(), [(0, 0, 120, 30)]).std() < 0.8 * strip.std(), \
 			"납작한 박스에 블러가 약하다 — 커널이 짧은 변 기준인지 확인 (MSG-280)"
+
+		# MSG-284 프리체크. 단색은 대비가 0이라 밝기와 무관하게 탈락 방향이어야 한다.
+		black = np.zeros((120, 160, 3), dtype=np.uint8)
+		white = np.full((120, 160, 3), 255, dtype=np.uint8)
+		assert frame_metrics(black)["std"] < PRECHECK_STD_THRESHOLD, "검은 단색이 탈락 방향이 아니다"
+		assert frame_metrics(white)["std"] < PRECHECK_STD_THRESHOLD, "흰 단색이 탈락 방향이 아니다"
+		# 센서 노이즈가 낀 암흑 프레임(리포트의 FAIL 샘플 구성)도 탈락해야 한다 —
+		# 노이즈는 lap_var를 키우지만 std는 못 키운다는 게 std를 택한 이유다
+		noisy = np.random.default_rng(0).integers(0, 12, (120, 160, 3), dtype=np.uint8)
+		assert frame_metrics(noisy)["std"] < PRECHECK_STD_THRESHOLD, "노이즈 낀 암흑이 통과 방향이다"
+
+		ok = precheck(src)
+		assert ok["passed"] and ok["reason"] is None, f"컬러바 영상이 탈락했다(오탐): {ok}"
+
+		dark = Path(tmp) / "dark.mp4"
+		make_dark_video(dark, dark_sec=6)
+		bad = precheck(dark)
+		assert not bad["passed"], f"암흑 영상이 통과했다(미탐): {bad}"
+		assert bad["reason"].startswith("too_dark:") and "std" in bad["reason"], \
+			f"reason 형식이 계약과 다르다: {bad['reason']}"
+
+		# 중앙값 규칙의 오탐 방지 — 촬영 시작 직후에만 가려진 영상은 통과해야 한다
+		head_dark = Path(tmp) / "head-dark.mp4"
+		make_dark_video(head_dark, dark_sec=1, bright_sec=5)
+		assert precheck(head_dark)["passed"], "앞부분만 어두운 영상이 탈락했다 — 중앙값 규칙 미작동"
+
+		# 프레임 0장은 기존 실패 경로(SystemExit)를 그대로 탄다 (MSG-284 FR-8)
+		try:
+			video_metrics(src, 0)
+			raise AssertionError("프레임 0장인데 SystemExit이 안 났다")
+		except SystemExit:
+			pass
+
+		# 부분 디코딩(손상 입력)이 "너무 어두움" 탈락으로 오진되지 않고 실패 경로로 가는지 (FR-8).
+		# 실제 부분 디코딩을 만들기 어려워 sample_frames를 잠깐 갈아끼운다 — 가드는 precheck 안에 있다
+		real_sample = sample_frames
+		globals()["sample_frames"] = lambda path, n: real_sample(path, 2)
+		try:
+			precheck(src, 10)
+			raise AssertionError("표본이 절반 미만인데 SystemExit이 안 났다")
+		except SystemExit:
+			pass
+		finally:
+			globals()["sample_frames"] = real_sample
+
 		print(json.dumps(report, indent=2, ensure_ascii=False))
+		print(f"precheck: 컬러바={ok['metrics']['std']} / 암흑={bad['metrics']['std']} ({bad['reason']})")
 		print("\nsmoke OK")
 
 

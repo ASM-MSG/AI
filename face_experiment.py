@@ -24,7 +24,7 @@ from pathlib import Path
 
 import cv2
 
-from bench import FACE_MODEL, make_smoke_video, to_boxes
+from bench import FACE_MODEL, make_smoke_video, sample_frames, to_boxes
 
 # 모델 크기 축은 deepghs(akanametov WIDER FACE 학습) 한 패밀리로 통일한다 —
 # AdamCodd n과 학습 데이터가 달라서, deepghs n을 끼워 넣어야 크기 효과가 분리된다.
@@ -52,22 +52,6 @@ CONFIGS = [
 IOU_MATCH = 0.5
 MIN_VOTES = 2  # 합의 GT에 넣으려면 몇 개 설정이 동의해야 하는가
 ANNOTATE_EVERY = 5  # 샘플 프레임 중 몇 장에 한 번 주석 이미지를 남길까
-
-
-def sample_frames(path, n):
-	"""영상에서 n프레임을 균등 간격으로 뽑는다."""
-	cap = cv2.VideoCapture(str(path))
-	if not cap.isOpened():
-		raise SystemExit(f"영상을 열 수 없음: {path}")
-	total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-	out = []
-	for i in range(n):
-		cap.set(cv2.CAP_PROP_POS_FRAMES, int(i * total / n))
-		ok, frame = cap.read()
-		if ok:
-			out.append((int(i * total / n), frame))
-	cap.release()
-	return out
 
 
 def iou(a, b):

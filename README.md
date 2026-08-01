@@ -61,16 +61,22 @@ AI 전용 인스턴스로 분리하면 secrets 값만 갈면 된다.
 | 메서드 | 경로 | 설명 |
 |---|---|---|
 | `POST` | `/jobs` | multipart `file`로 영상 업로드. 즉시 `202 {job_id, status}` |
-| `GET` | `/jobs/{id}` | `{job_id, status, highlights, error}` — 폴링용 |
-| `GET` | `/jobs/{id}/video` | 블러 처리본 mp4 (h264, 원본 오디오 유지). 완료 전 409 |
+| `GET` | `/jobs/{id}` | `{job_id, status, highlights, error, precheck}` — 폴링용 |
+| `GET` | `/jobs/{id}/video` | 블러 처리본 mp4 (h264, 원본 오디오 유지). 완료 전 409 · **프리체크 탈락 409** |
 | `GET` | `/health` | 컨테이너 헬스체크 |
 
 `status` 전이: `QUEUED → PROCESSING → DONE | FAILED`. BE 매핑 예:
 `PROCESSING`이면 `processing_status = BLURRING`. `highlights`는 완료 시
 `[[시작초, 끝초], …]` 최대 3구간.
 
+`precheck`(MSG-284)는 추론 전 무의미 영상(암흑·렌즈 가림) 판정 결과다 —
+`{passed: bool, reason: string|null}`, 판정 전에는 `null`.
+탈락 잡은 **`status=DONE` · `highlights=[]` · `precheck.passed=false`**이고 블러본이 없어
+`/video`가 **409**다(블러 안 한 원본을 대신 내보내지 않는다). BE가 `precheck`를 무시해도
+정상 영상 경로의 동작은 그대로다. 판정 규칙: `results/MSG-284-report.md`.
+
 파이프라인: **1080p 30fps 다운스케일**(ADR 전제 — 초과분만 축소, 업스케일 없음)
-→ 얼굴·번호판 블러 → 하이라이트 → h264 재인코딩 + 오디오 복원.
+→ **프리체크**(탈락이면 여기서 끝) → 얼굴·번호판 블러 → 하이라이트 → h264 재인코딩 + 오디오 복원.
 잡은 큐로 순차 처리한다(1 vCPU 전제, 시간당 약 17건 상한).
 
 ## 벤치마크 (MSG-142)
