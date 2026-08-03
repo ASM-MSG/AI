@@ -201,7 +201,7 @@ def smoke():
 		print(f"결과: {w}x{h} @ {fps:.0f}fps, highlights={job['highlights']}, precheck={job['precheck']}")
 
 		# MSG-284 탈락 경로. 처리 시간 어서션은 넣지 않는다 — macOS 측정은 무효라
-		# 5초 요건은 dev EC2 실측으로 판정한다 (CLAUDE.md "알아둘 함정")
+		# 성능 요건(탈락 잡 ≤ 정상 잡의 1/5)은 dev EC2 실측으로 판정한다 (CLAUDE.md "알아둘 함정")
 		dark = Path(tmp) / "dark.mp4"
 		bench.make_dark_video(dark, dark_sec=6)
 		dark_id = upload(dark)
