@@ -156,17 +156,40 @@ def detect_highlights(path, duration, stage):
 
 
 def sample_frames(path, n):
-	"""영상에서 n프레임을 균등 간격으로 뽑는다."""
+	"""영상에서 n프레임을 균등 간격으로 뽑는다. 뽑는 인덱스는 `int(i * total / n)`.
+
+	**시킹(`cap.set(POS_FRAMES)`)을 쓰지 않는다.** 시킹은 목표 프레임마다 앞선 키프레임까지
+	되감아 다시 디코딩하므로 같은 구간을 반복해서 푼다. 순차 `grab()`은 되감기가 없어
+	dev EC2 실측 10프레임 확보 6.49초 → 3.81초.
+
+	**단, `grab()`은 디코딩을 생략하지 않는다** — BGR 변환(retrieve)만 건너뛴다
+	(실측 0.556 vs 0.993 ms/frame). 즉 이 함수는 **O(총 프레임)** 이라 영상이 길수록 불리하고,
+	시킹은 길이와 무관하게 평평하다. **교차점이 약 1분**이다(30초 0.46초 / 2분 1.82초).
+	30초 이하가 전제이며 근거는 BE의 `durationSec <= 30` 검증이다 —
+	**길이 상한이 풀리면 이 선택이 역행이 된다.** 길이별 실측: results/MSG-284-report.md
+	"""
 	cap = cv2.VideoCapture(str(path))
 	if not cap.isOpened():
 		raise SystemExit(f"영상을 열 수 없음: {path}")
 	total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 	out = []
+	pos = 0
 	for i in range(n):
-		cap.set(cv2.CAP_PROP_POS_FRAMES, int(i * total / n))
+		want = int(i * total / n)
+		if out and want == out[-1][0]:
+			# n > total이면 같은 인덱스가 연속으로 나온다. 순차 재생은 되감을 수 없으니
+			# 앞서 디코딩한 프레임을 그대로 재사용한다 — 시킹판과 결과가 같아야 한다.
+			out.append(out[-1])
+			continue
+		while pos < want and cap.grab():
+			pos += 1
+		if pos < want:
+			break  # 메타데이터의 total보다 실제가 짧다 — 남은 인덱스는 어차피 못 읽는다
 		ok, frame = cap.read()
-		if ok:
-			out.append((int(i * total / n), frame))
+		if not ok:
+			break
+		pos += 1
+		out.append((want, frame))
 	cap.release()
 	return out
 
@@ -381,6 +404,23 @@ def smoke():
 		head_dark = Path(tmp) / "head-dark.mp4"
 		make_dark_video(head_dark, dark_sec=1, bright_sec=5)
 		assert precheck(head_dark)["passed"], "앞부분만 어두운 영상이 탈락했다 — 중앙값 규칙 미작동"
+
+		# 프레임 확보를 시킹에서 순차 grab으로 바꿨다(MSG-284 후속). **뽑는 인덱스가 시킹판과
+		# 같아야** results/MSG-284-precheck.json·MSG-281-grid.json 같은 기존 실측 근거가 유효하다.
+		# n이 총 프레임보다 크면 같은 인덱스가 연속으로 나온다 — 순차 재생은 되감을 수 없는 경로다.
+		cap = cv2.VideoCapture(str(src))
+		for n in (7, report["frames"] * 2):
+			picked = sample_frames(src, n)
+			assert [i for i, _ in picked] == [int(i * report["frames"] / n) for i in range(n)], \
+				f"n={n}: 균등 인덱스가 어긋났다 — 기존 실측과 다른 프레임을 뽑는다 (MSG-284)"
+			# 인덱스는 append 때 붙이는 라벨이라 인덱스만 보면 "라벨은 맞고 프레임이 한 장 밀린"
+			# off-by-one이 통과한다. 이 변경이 지켜야 하는 성질은 같은 픽셀이라 한 장은 시킹으로 직접 대조한다.
+			want, frame = picked[len(picked) // 2]
+			cap.set(cv2.CAP_PROP_POS_FRAMES, want)
+			read_ok, expected = cap.read()  # 위쪽 precheck 결과 ok를 가리지 않도록 이름을 따로 쓴다
+			assert read_ok and np.array_equal(frame, expected), \
+				f"n={n}: 인덱스 {want}의 픽셀이 시킹판과 다르다 (MSG-284)"
+		cap.release()
 
 		# 프레임 0장은 기존 실패 경로(SystemExit)를 그대로 탄다 (MSG-284 FR-8)
 		try:
