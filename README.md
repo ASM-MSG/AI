@@ -11,7 +11,7 @@ HTTP로만 통신하는 별도 프로세스다.
 이 레포는 Ultralytics YOLOv11을 쓰고, Ultralytics는 AGPL-3.0이다. AGPL 13조는 배포하지
 않고 네트워크 서비스로만 제공해도 소스 공개 의무를 발생시킨다(상업 여부 무관).
 
-BE 레포와 프로세스·저장소를 분리한 이유가 이것이다 — 전염 경계를 여기서 끊어
+BE 레포와 프로세스·저장소를 분리한 이유가 이것이다. 전염 경계를 여기서 끊어
 `ASM-MSG/BE`는 MIT를 유지한다. 결정 근거는 BE 레포의 `docs/MSG-144.md` 참고.
 
 ## 모델
@@ -24,22 +24,29 @@ BE 레포와 프로세스·저장소를 분리한 이유가 이것이다 — 전
 
 가중치는 첫 실행 시 Hugging Face에서 자동 다운로드된다.
 
-## 서버 (MSG-161)
+## 서버 (MSG-161, MSG-339)
 
-FastAPI 상시 서버 (MSG-143 ADR). dev EC2에 Docker 컨테이너로 배포한다.
+FastAPI 상시 서버 (MSG-143 ADR). BE와 분리한 AI 전용 dev EC2에 Docker 컨테이너로 배포한다.
+기본값은 워커[^1] 1개와 배치[^2] 1개다. 전용 t3.small 실측에서 배치 2와 4가 각각 4.34%,
+3.94% 느려 기각했으며, 실측 원자료와 판정은 `results/MSG-339-report.md`에 남겼다.
 
 ```bash
 ./.venv/bin/python server.py --smoke     # 합성 영상으로 API 왕복 검증
 ./.venv/bin/uvicorn server:app --port 8000
 
 docker build -t fillmap-ai .
-docker run -p 8000:8000 -v hf-cache:/root/.cache/huggingface fillmap-ai
+docker run -p 8000:8000 -e AI_WORKERS=1 -e AI_BATCH_SIZE=1 \
+  -v hf-cache:/root/.cache/huggingface fillmap-ai
 ```
+
+`AI_WORKERS`는 `1` 또는 `2`, `AI_BATCH_SIZE`는 `1`, `2`, `4`만 받는다. 현재 배포값과
+롤백값은 모두 `1`이다. t3 계열은 CPU 크레딧[^3]을 다 쓰고도 계속 버스트하면 추가 비용이
+생길 수 있으므로 처리량 실측과 함께 확인한다.
 
 ### 배포 (MSG-282)
 
 **`main`에 머지하면 자동 배포된다.** GitHub Actions(`.github/workflows/cd-dev.yml`)가
-`scripts/ec2-deploy.sh`를 dev EC2에서 실행한다 — pull → 이미지 빌드 → 컨테이너 교체 →
+`scripts/ec2-deploy.sh`를 AI 전용 dev EC2에서 실행한다. pull → 이미지 빌드 → 컨테이너 교체 →
 `/health` 대기 → 실영상 E2E. E2E까지 통과해야 초록불이라, 뜨자마자 죽은 경우를 잡는다.
 
 수동으로 돌릴 때(Actions 없이, 또는 재배포):
@@ -51,17 +58,17 @@ scp scripts/ec2-deploy.sh <user>@<host>:~/ && ssh <user>@<host> 'bash ec2-deploy
 ```
 
 배포 대상은 secrets(`DEV_EC2_HOST`/`DEV_EC2_USER`/`DEV_EC2_SSH_KEY`)로 주입한다.
-AI 전용 인스턴스로 분리하면 secrets 값만 갈면 된다.
+`DEV_EC2_HOST`는 AI 전용 인스턴스의 EIP를 가리킨다.
 
 ### API (BE ↔ AI 계약)
 
-처리는 비동기다 — 1080p 30초 기준 3~4분 걸린다(실측). BE는 업로드 후
+처리는 비동기다. 1080p 30초 기준 3~4분 걸린다(실측). BE는 업로드 후
 상태를 폴링해 `processing_status`를 갱신한다.
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
 | `POST` | `/jobs` | multipart `file`로 영상 업로드. 즉시 `202 {job_id, status}` |
-| `GET` | `/jobs/{id}` | `{job_id, status, highlights, error, precheck}` — 폴링용 |
+| `GET` | `/jobs/{id}` | `{job_id, status, highlights, error, precheck}` (폴링용) |
 | `GET` | `/jobs/{id}/video` | 블러 처리본 mp4 (h264, 원본 오디오 유지). 완료 전 409 · **프리체크 탈락 409** |
 | `GET` | `/health` | 컨테이너 헬스체크 |
 
@@ -69,15 +76,15 @@ AI 전용 인스턴스로 분리하면 secrets 값만 갈면 된다.
 `PROCESSING`이면 `processing_status = BLURRING`. `highlights`는 완료 시
 `[[시작초, 끝초], …]` 최대 3구간.
 
-`precheck`(MSG-284)는 추론 전 무의미 영상(암흑·렌즈 가림) 판정 결과다 —
+`precheck`(MSG-284)는 추론 전 무의미 영상(암흑·렌즈 가림) 판정 결과다.
 `{passed: bool, reason: string|null}`, 판정 전에는 `null`.
 탈락 잡은 **`status=DONE` · `highlights=[]` · `precheck.passed=false`**이고 블러본이 없어
 `/video`가 **409**다(블러 안 한 원본을 대신 내보내지 않는다). BE가 `precheck`를 무시해도
 정상 영상 경로의 동작은 그대로다. 판정 규칙: `results/MSG-284-report.md`.
 
-파이프라인: **1080p 30fps 다운스케일**(ADR 전제 — 초과분만 축소, 업스케일 없음)
+파이프라인: **1080p 30fps 다운스케일**(ADR 전제, 초과분만 축소하고 업스케일하지 않음)
 → **프리체크**(탈락이면 여기서 끝) → 얼굴·번호판 블러 → 하이라이트 → h264 재인코딩 + 오디오 복원.
-잡은 큐로 순차 처리한다(1 vCPU 전제, 시간당 약 17건 상한).
+현재 잡은 큐에서 순차 처리한다(`AI_WORKERS=1`).
 
 ## 벤치마크 (MSG-142)
 
@@ -92,4 +99,8 @@ python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 단계별(디코딩 / 얼굴 추론 / 번호판 추론 / 마스킹 / 재인코딩) 시간을 따로 재서
 병목이 AI인지 인코딩인지 가른다.
 
-`samples/`는 gitignore 대상이다 — 실제 얼굴·번호판이 담긴 영상은 커밋하지 않는다.
+`samples/`는 gitignore 대상이다. 실제 얼굴·번호판이 담긴 영상은 커밋하지 않는다.
+
+[^1]: 워커는 큐에서 작업을 꺼내 블러 파이프라인을 실행하는 단위다. 값이 1이면 여러 요청이 와도 한 건씩 처리한다.
+[^2]: 배치 추론은 여러 프레임을 묶어 모델 호출 한 번에 넘기는 방식이다. 이 서버의 CPU 환경에서는 호출 횟수 감소보다 프레임 묶음 처리 비용이 더 컸다.
+[^3]: CPU 크레딧은 t3 계열이 기준 CPU 성능을 넘겨 쓸 때 소모하는 값이다. 24시간 평균이 기준을 넘으면 부족분에 요금이 붙을 수 있다.

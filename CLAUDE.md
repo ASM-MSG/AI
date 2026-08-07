@@ -8,8 +8,8 @@ FillMap의 AI Highlight-Blur 서버. 얼굴·번호판 자동 블러 + 하이라
 백엔드(Spring Boot, [ASM-MSG/BE](https://github.com/ASM-MSG/BE))와는 **HTTP로만 통신하는 별도 프로세스**다.
 
 - 스택: Python · ultralytics(YOLOv11n) · PySceneDetect · ffmpeg · (예정) FastAPI
-- 실행 환경: dev EC2에 Docker 컨테이너 상시 서버 — BE 레포 `docs/MSG-143.md` (ADR) 확정.
-  현재 BE와 같은 인스턴스에 산다(안정화 후 AI 전용으로 분리 예정)
+- 실행 환경: AI 전용 dev EC2(t3.small)에 Docker 컨테이너 상시 서버 — BE 레포
+  `docs/MSG-143.md` (ADR), `results/MSG-339-report.md` 확정. BE는 사설 IP로 호출한다
 - 배포: **`main` 머지 시 자동**(MSG-282, `.github/workflows/cd-dev.yml`). 실체는
   `scripts/ec2-deploy.sh`이고 실영상 E2E까지 통과해야 초록불이다
 - 모델 선정 근거: BE 레포 `docs/MSG-144.md`
@@ -101,7 +101,11 @@ release/{버전}
   두 모델 다 640으로 학습됐다. **더 만질 축이 아니다**
 - **"추론 커널만 빠르게"는 전처리에 막힌다** — imgsz 320은 연산량이 1/4인데 실측 1.2~1.5배뿐이다.
   `predict()` 시간에는 1080p letterbox 리사이즈와 NMS가 섞여 있고 이건 imgsz와 무관하다.
-  OpenVINO가 +5%였던 것(MSG-207)과 같은 벽 — 남은 소프트웨어 레버는 **배치 추론**뿐
+  OpenVINO가 +5%였던 것(MSG-207)과 같은 벽이다
+- **t3.small에서 배치 추론을 켜지 말 것** — MSG-339 단일 3회 중앙값은 배치 1이 180.53초,
+  배치 2가 188.37초(+4.34%), 배치 4가 187.64초(+3.94%)였다. 검출 상자는 같았지만 속도
+  기준을 못 넘겨 워커 2 실험도 게이트에서 중단했다. 배포값과 롤백값은 `AI_WORKERS=1`,
+  `AI_BATCH_SIZE=1`이다
 - **블러 커널은 ROI 긴 변 기준이다** — 짧은 변으로 잡으면 번호판처럼 납작한 박스에서 커널이
   글자 굵기보다 작아져 "가린 척"만 한다(MSG-280). 정상 완료로 보고되므로 미탐지보다 위험하다
 - **블러 검증을 얼굴로만 하지 말 것** — 얼굴 박스는 정사각형에 가까워 위 함정을 비껴간다.
@@ -127,10 +131,12 @@ release/{버전}
   MSG-280(번호판 블러 강도 수정 — 커널 긴 변 기준, 근거는 `results/MSG-280-report.md`) ·
   MSG-282(dev CD — main 머지 시 자동 배포) ·
   MSG-281(imgsz 하향 **기각** — recall 붕괴, 근거는 `results/MSG-281-report.md`) ·
+  MSG-339(AI 전용 t3.small 분리 완료, 배치 2·4와 워커 2 채택 기각 — 근거는
+  `results/MSG-339-report.md`) ·
   MSG-284(무의미 영상 프리체크 — grayscale std 중앙값 10 미만 탈락, 근거는 `results/MSG-284-report.md`.
   **BE 대응(MSG-286) 전까지 탈락 잡은 BE에서 PT30M 뒤에야 FAILED로 수렴한다** — 409를 "완료 전"으로
   해석해 재시도하기 때문. 큐 절감은 유효하고 손해는 그 사용자의 대기 시간뿐이다)
 - 남은 것: 감지 건수(얼굴 N·번호판 N) 응답 추가(MSG-140 잔여 완료 조건) ·
-  AI 처리량 확장은 시간당 20건+ 지속 시 재평가(MSG-151 트리거) ·
+  AI 처리량 확장은 실제 수요가 시간당 20건 이상으로 유지되면 인스턴스 유형부터 재평가 ·
   **MSG-284 탈락률 관측** — 운영 후 무의미 영상이 업로드의 2% 미만이면 프리체크가 손해다
   (판정 비용 > 절감. 손익분기 계산은 `results/MSG-284-report.md`). FR-7 판정 로그가 데이터 장치다
