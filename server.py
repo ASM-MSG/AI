@@ -7,6 +7,8 @@ GET /jobs/{id}를 폴링해 processing_status를 갱신한다. 계약은 README 
     uvicorn server:app --host 0.0.0.0 --port 8000
     python server.py --smoke        # 합성 영상으로 API 왕복 검증
 
+    AI_WORKERS=1                    # 허용값 1·2. 채택값은 results/MSG-339-report.md에서 확정
+
 블러·하이라이트 로직은 bench.py를 그대로 쓴다 — 서버는 껍데기다.
 """
 
@@ -29,10 +31,12 @@ import bench
 
 DEVICE = os.environ.get("DEVICE", "cpu")
 JOBS_DIR = Path(os.environ.get("JOBS_DIR", "jobs"))
+AI_WORKERS = int(os.environ.get("AI_WORKERS", "1"))
+if AI_WORKERS not in (1, 2):
+	raise ValueError("AI_WORKERS는 1, 2만 허용")
 
-# ponytail: 인메모리 잡 저장소 + 단일 워커 스레드 — 재시작하면 진행 중 잡이 유실된다.
-# 1 vCPU에 순차 처리가 전제(MSG-143)라 큐도 스레드도 하나면 된다.
-# 유실이 실제 문제가 되면 SQLite, 병렬이 필요해지면 그때 프로세스 풀.
+# ponytail: 인메모리 잡 저장소라 재시작하면 진행 중 잡이 유실된다.
+# 실제 유실이 생기면 SQLite로 올린다.
 jobs = {}
 job_queue = queue.Queue()
 
@@ -105,7 +109,9 @@ def worker():
 			job["status"] = "FAILED"
 
 
-threading.Thread(target=worker, daemon=True).start()
+worker_threads = [threading.Thread(target=worker, daemon=True) for _ in range(AI_WORKERS)]
+for thread in worker_threads:
+	thread.start()
 
 app = FastAPI(title="FillMap AI Highlight-Blur")
 
@@ -156,6 +162,9 @@ def smoke():
 
 	with tempfile.TemporaryDirectory() as tmp:
 		JOBS_DIR = Path(tmp) / "jobs"
+		expected_workers = int(os.environ.get("AI_WORKERS", "1"))
+		assert len(globals().get("worker_threads", [])) == expected_workers, "설정한 워커 수와 다르다"
+		assert all(thread.is_alive() for thread in globals().get("worker_threads", [])), "종료된 워커가 있다"
 		src = Path(tmp) / "in.mp4"
 		# 4K 60fps로 만들어 다운스케일 경로까지 태운다
 		bench.make_smoke_video(src, seconds=6, fps=60, size=(3840, 2160))
@@ -178,16 +187,20 @@ def smoke():
 				time.sleep(2)
 			raise AssertionError(f"처리 시간 초과: {job_id}")
 
-		job_id = upload(src)
-		assert client.get(f"/jobs/{job_id}/video").status_code == 409, "완료 전엔 409여야 한다"
+		job_ids = [upload(src), upload(src)]
+		for job_id in job_ids:
+			assert client.get(f"/jobs/{job_id}/video").status_code == 409, "완료 전엔 409여야 한다"
 
-		job = wait_done(job_id)
-		assert job["status"] == "DONE", f"처리 실패: {job}"
-		assert len(job["highlights"]) <= 3, "하이라이트는 최대 3구간 (MSG-141)"
-		assert job["precheck"] == {"passed": True, "reason": None}, f"정상 영상 프리체크 계약 위반: {job['precheck']}"
+		done_jobs = [wait_done(job_id) for job_id in job_ids]
+		videos = [client.get(f"/jobs/{job_id}/video") for job_id in job_ids]
+		for job, video in zip(done_jobs, videos):
+			assert job["status"] == "DONE", f"처리 실패: {job}"
+			assert len(job["highlights"]) <= 3, "하이라이트는 최대 3구간 (MSG-141)"
+			assert job["precheck"] == {"passed": True, "reason": None}, \
+				f"정상 영상 프리체크 계약 위반: {job['precheck']}"
+			assert video.status_code == 200 and len(video.content) > 0, "결과 영상이 비었다"
 
-		video = client.get(f"/jobs/{job_id}/video")
-		assert video.status_code == 200 and len(video.content) > 0, "결과 영상이 비었다"
+		job, video = done_jobs[0], videos[0]
 		assert client.get("/jobs/없는아이디").status_code == 404
 
 		out = Path(tmp) / "out.mp4"
@@ -214,6 +227,16 @@ def smoke():
 		# 파일이 없다는 사실 자체가 원본 유출 차단이다 (FR-6)
 		assert not (JOBS_DIR / dark_id / "out.mp4").exists(), "탈락 잡인데 out.mp4가 생성됐다"
 		print(f"탈락 경로: precheck={dark_job['precheck']}")
+
+		broken = Path(tmp) / "broken.mp4"
+		broken.write_bytes(b"not a video")
+		broken_id = upload(broken)
+		assert client.get(f"/jobs/{broken_id}/video").status_code == 409, \
+			"실패 전 손상 입력 영상은 409여야 한다"
+		broken_job = wait_done(broken_id)
+		assert broken_job["status"] == "FAILED", f"손상 입력이 FAILED가 아니다: {broken_job}"
+		assert all(client.get(f"/jobs/{job_id}").json()["status"] == "DONE" for job_id in job_ids), \
+			"손상 입력이 정상 작업 상태를 바꿨다"
 		print("smoke OK")
 
 
