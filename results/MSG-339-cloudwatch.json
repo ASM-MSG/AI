@@ -1,0 +1,26 @@
+{
+  "instance_id": "i-0b5828e26d4bc7dec",
+  "region": "ap-northeast-2",
+  "period_sec": 300,
+  "query_start": "2026-08-07T09:00:00Z",
+  "query_end": "2026-08-07T11:10:00Z",
+  "latest_datapoint": "2026-08-07T20:05:00+09:00",
+  "metrics": {
+    "CPUUtilization": {
+      "maximum_pct": 96.88208995062057,
+      "latest_average_pct": 59.83333333333334
+    },
+    "CPUCreditBalance": {
+      "minimum": 0.0,
+      "latest": 0.0
+    },
+    "CPUSurplusCreditBalance": {
+      "maximum": 70.68644063333333,
+      "latest": 70.68644063333333
+    },
+    "CPUSurplusCreditsCharged": {
+      "maximum": 0.0,
+      "latest": 0.0
+    }
+  }
+}

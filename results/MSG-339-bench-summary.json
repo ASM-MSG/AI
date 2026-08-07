@@ -1,0 +1,66 @@
+{
+  "instance_type": "t3.small",
+  "backend": "torch",
+  "infer_stride": 1,
+  "video": "samples/crowd.mp4",
+  "runs_per_batch": 3,
+  "results": [
+    {
+      "batch_size": 1,
+      "runs": [
+        {
+          "wall_sec": 180.53,
+          "peak_memory_mb": 493.1
+        },
+        {
+          "wall_sec": 181.08,
+          "peak_memory_mb": 503.7
+        },
+        {
+          "wall_sec": 180.05,
+          "peak_memory_mb": 498.9
+        }
+      ],
+      "median_wall_sec": 180.53,
+      "peak_memory_mb": 503.7
+    },
+    {
+      "batch_size": 2,
+      "runs": [
+        {
+          "wall_sec": 188.37,
+          "peak_memory_mb": 545.1
+        },
+        {
+          "wall_sec": 192.4,
+          "peak_memory_mb": 533.8
+        },
+        {
+          "wall_sec": 186.72,
+          "peak_memory_mb": 542.2
+        }
+      ],
+      "median_wall_sec": 188.37,
+      "peak_memory_mb": 545.1
+    },
+    {
+      "batch_size": 4,
+      "runs": [
+        {
+          "wall_sec": 187.64,
+          "peak_memory_mb": 615.5
+        },
+        {
+          "wall_sec": 186.12,
+          "peak_memory_mb": 612.2
+        },
+        {
+          "wall_sec": 191.13,
+          "peak_memory_mb": 612.6
+        }
+      ],
+      "median_wall_sec": 187.64,
+      "peak_memory_mb": 615.5
+    }
+  ]
+}
