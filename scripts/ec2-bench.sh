@@ -53,10 +53,10 @@ fi
 cd "$WORKDIR"
 
 log "3/5 파이썬 의존성"
-python3 -m venv .venv
+python3 -m venv --clear .venv
 "$WORKDIR/.venv/bin/pip" install -q --upgrade pip
 if [ "$(uname -m)" = "x86_64" ]; then
-	"$WORKDIR/.venv/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
+	"$WORKDIR/.venv/bin/pip" install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
 fi
 "$WORKDIR/.venv/bin/pip" install -q -r requirements.txt
 
