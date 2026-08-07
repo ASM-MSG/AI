@@ -12,6 +12,9 @@ MSG-207 실험 노브 (환경변수) — **둘 다 실측 결과 미채택, 기�
     AI_BACKEND=openvino       # +5%뿐이라 미채택. 쓰려면 openvino 별도 설치 필요
     AI_INFER_STRIDE=3         # 도로 씬 번호판 커버 46%로 붕괴 — 프라이버시 사고라 미채택
     AI_BOX_PAD=0.10           # 스킵 프레임 재사용 박스 확장 비율 (stride>1일 때만 의미)
+
+MSG-339 배치 노브 (전용 EC2 실측 전 기본값 1):
+    AI_BATCH_SIZE=1           # 허용값 1·2·4. 채택값은 results/MSG-339-report.md에서 확정
 """
 
 import argparse
@@ -52,6 +55,9 @@ BRIGHT_LEVEL = 64
 BACKEND = os.environ.get("AI_BACKEND", "torch")             # torch | openvino
 INFER_STRIDE = int(os.environ.get("AI_INFER_STRIDE", "1"))  # k프레임마다 1회 추론
 BOX_PAD = float(os.environ.get("AI_BOX_PAD", "0.10"))       # 재사용 박스 확장 비율
+AI_BATCH_SIZE = int(os.environ.get("AI_BATCH_SIZE", "1"))
+if AI_BATCH_SIZE not in (1, 2, 4):
+	raise ValueError("AI_BATCH_SIZE는 1, 2, 4만 허용")
 
 
 class Stage:
@@ -276,35 +282,48 @@ def run(path, device, out_path):
 	height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 	writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
 
-	frames = face_hits = plate_hits = 0
+	frames = face_hits = plate_hits = inference_batches = 0
 	reused = []
 	while True:
-		with stage.track("decode"):
-			ok, frame = cap.read()
-		if not ok:
+		pending = []
+		while len(pending) < AI_BATCH_SIZE:
+			with stage.track("decode"):
+				ok, frame = cap.read()
+			if not ok:
+				break
+			pending.append((frames, frame))
+			frames += 1
+		if not pending:
 			break
-		frames += 1
 
-		if (frames - 1) % INFER_STRIDE == 0:
+		infer_frames = [frame for index, frame in pending if index % INFER_STRIDE == 0]
+		face_results = plate_results = []
+		if infer_frames:
 			with stage.track("infer_face"):
-				fr = face.predict(frame, conf=FACE_CONF, verbose=False)[0]
+				face_results = face.predict(infer_frames, conf=FACE_CONF, verbose=False)
 			with stage.track("infer_plate"):
-				pr = plate.predict(frame, conf=PLATE_CONF, verbose=False)[0]
+				plate_results = plate.predict(infer_frames, conf=PLATE_CONF, verbose=False)
+			inference_batches += 1
 
-			fb, pb = to_boxes(fr, width, height), to_boxes(pr, width, height)
-			face_hits += len(fb)
-			plate_hits += len(pb)
-			boxes = fb + pb
-			reused = pad_boxes(boxes, width, height)
-		else:
-			# MSG-207: 스킵 프레임은 직전 추론 박스의 확장본을 재사용한다.
-			# 커버리지 근거는 results/MSG-207-report.md (stride·pad 시뮬레이션)
-			boxes = reused
+		result_index = 0
+		for index, frame in pending:
+			if index % INFER_STRIDE == 0:
+				fb = to_boxes(face_results[result_index], width, height)
+				pb = to_boxes(plate_results[result_index], width, height)
+				result_index += 1
+				face_hits += len(fb)
+				plate_hits += len(pb)
+				boxes = fb + pb
+				reused = pad_boxes(boxes, width, height)
+			else:
+				# MSG-207: 스킵 프레임은 직전 추론 박스의 확장본을 재사용한다.
+				# 커버리지 근거는 results/MSG-207-report.md (stride·pad 시뮬레이션)
+				boxes = reused
 
-		with stage.track("mask"):
-			frame = blur_boxes(frame, boxes)
-		with stage.track("encode"):
-			writer.write(frame)
+			with stage.track("mask"):
+				frame = blur_boxes(frame, boxes)
+			with stage.track("encode"):
+				writer.write(frame)
 
 	cap.release()
 	writer.release()
@@ -319,6 +338,8 @@ def run(path, device, out_path):
 		"device": device,
 		"backend": BACKEND,
 		"infer_stride": INFER_STRIDE,
+		"batch_size": AI_BATCH_SIZE,
+		"inference_batches": inference_batches,
 		"resolution": f"{width}x{height}",
 		"frames": frames,
 		"video_sec": round(duration, 2),
@@ -360,16 +381,78 @@ def make_dark_video(path, dark_sec=6, bright_sec=0, size=(640, 480), fps=30):
 def smoke():
 	with tempfile.TemporaryDirectory() as tmp:
 		src, dst = Path(tmp) / "in.mp4", Path(tmp) / "out.mp4"
-		make_smoke_video(src)
+		make_smoke_video(src, seconds=6.1)  # 배치 4의 마지막 3장이 별도 추론 경로를 타야 한다 (MSG-339)
 		report = run(src, "cpu", dst)
 
 		assert report["frames"] > 0, "프레임을 하나도 읽지 못했다"
+		batch_size = int(os.environ.get("AI_BATCH_SIZE", "1"))
+		assert batch_size == 1 or report["frames"] % batch_size, \
+			"마지막 불완전 배치를 검증하지 못하는 합성 영상이다"
+		assert report.get("batch_size") == batch_size, "적용된 배치 크기가 리포트에 없다"
+		expected_batches = len({index // batch_size for index in range(0, report["frames"], INFER_STRIDE)})
+		assert report.get("inference_batches") == expected_batches, \
+			"마지막 불완전 배치를 포함한 추론 호출 수가 다르다"
+		out_cap = cv2.VideoCapture(str(dst))
+		assert int(out_cap.get(cv2.CAP_PROP_FRAME_COUNT)) == report["frames"], "출력 프레임 수가 입력과 다르다"
+		out_cap.release()
 		assert dst.exists() and dst.stat().st_size > 0, "출력 영상이 비었다"
 		assert len(report["highlights"]) <= 3, "하이라이트는 최대 3구간 (MSG-141)"
 		assert report["highlights"], "5초 이상인데 하이라이트 0개 (MSG-159 폴백 미작동)"
 		assert set(report["stages"]) >= {"decode", "infer_face", "encode"}, "단계 계측 누락"
 		assert pad_boxes([(10, 10, 20, 20)], 100, 100, pad=0.1) == [(9, 9, 21, 21)], "박스 확장 오계산"
 		assert pad_boxes([(0, 0, 100, 100)], 100, 100, pad=0.2) == [(0, 0, 100, 100)], "확장이 프레임을 벗어남"
+
+		# MSG-339: 검출 0건인 합성 영상은 결과를 다른 프레임에 적용해도 잡지 못한다.
+		# 7장에 식별자를 심어 배치 4의 마지막 3장과 두 모델 결과가
+		# 입력 순서대로 소비되는지 확인한다.
+		palette = [32, 64, 96, 128, 160, 192, 224]
+		order_src, order_dst = Path(tmp) / "order.mp4", Path(tmp) / "order-out.mp4"
+		order_writer = cv2.VideoWriter(str(order_src), cv2.VideoWriter_fourcc(*"mp4v"), 30, (32, 32))
+		for value in palette:
+			order_writer.write(np.full((32, 32, 3), value, dtype=np.uint8))
+		order_writer.release()
+
+		class ProbeResult:
+			def __init__(self, marker, y):
+				self.boxes = type("ProbeBoxes", (), {
+					"xyxy": np.array([[marker, y, marker + 1, y + 1]], dtype=np.float32),
+				})()
+
+		class ProbeModel:
+			def __init__(self, y):
+				self.y = y
+				self.batch_lengths = []
+
+			def predict(self, sources, **_kwargs):
+				assert isinstance(sources, list), "Ultralytics에 프레임 목록이 아니라 낱장을 넘겼다"
+				self.batch_lengths.append(len(sources))
+				return [ProbeResult(min(range(7), key=lambda i: abs(float(frame.mean()) - palette[i])) + 1, self.y)
+					for frame in sources]
+
+		face_probe, plate_probe = ProbeModel(0), ProbeModel(2)
+		applied = []
+
+		def record_blur(frame, boxes):
+			frame_marker = min(range(7), key=lambda i: abs(float(frame.mean()) - palette[i])) + 1
+			applied.append((frame_marker, boxes[0][0], boxes[1][0]))
+			return frame
+
+		real_load_models, real_blur_boxes = load_models, blur_boxes
+		globals()["load_models"] = lambda _device: (face_probe, plate_probe)
+		globals()["blur_boxes"] = record_blur
+		try:
+			order_report = run(order_src, "cpu", order_dst)
+		finally:
+			globals()["load_models"], globals()["blur_boxes"] = real_load_models, real_blur_boxes
+		expected_markers = [(i // INFER_STRIDE) * INFER_STRIDE + 1 for i in range(7)]
+		assert applied == [(i + 1, marker, marker) for i, marker in enumerate(expected_markers)], \
+			f"배치 결과와 입력 프레임 순서가 어긋났다: {applied}"
+		expected_sizes = [sum(i % INFER_STRIDE == 0 for i in range(start, min(start + batch_size, 7)))
+			for start in range(0, 7, batch_size)]
+		expected_sizes = [size for size in expected_sizes if size]
+		assert face_probe.batch_lengths == expected_sizes == plate_probe.batch_lengths, \
+			f"모델별 배치 구성이 다르다: face={face_probe.batch_lengths}, plate={plate_probe.batch_lengths}"
+		assert order_report["frames"] == 7, "마지막 불완전 배치의 프레임이 출력되지 않았다"
 
 		# MSG-280: 납작한 박스가 실제로 뭉개지는지. 합성 영상엔 검출 대상이 없어 blur_boxes가
 		# 안 타므로 직접 태운다. 30×120에 15px 폭 블록 = 번호판 글자 굵기 근사.
