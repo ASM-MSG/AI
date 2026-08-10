@@ -51,6 +51,11 @@ PRECHECK_FRAMES = 10   # 20/10/5장에서 std가 ±0.2% 이내라 20장은 낭�
 # "몇 이상을 밝다고 칠 것인가"가 자의적이라 임계값 지표로는 채택하지 않았다 (MSG-284 리포트)
 BRIGHT_LEVEL = 64
 
+# MSG-353: 하이라이트 구간 품질 — 후보끼리 절반 이상 겹치면 FE 선택이 무의미해진다.
+# 값의 정본은 BE 레포 docs/prd/MSG-351-prd.md FR-3 (구간 최소 5초, 시작점 간격 5초).
+HIGHLIGHT_MIN_SEC = 5.0
+HIGHLIGHT_MIN_GAP_SEC = 5.0
+
 # MSG-207: 추론 백엔드·프레임 스트라이드. 실측 결과 두 노브 모두 미채택 — 기본값이 정본.
 BACKEND = os.environ.get("AI_BACKEND", "torch")             # torch | openvino
 INFER_STRIDE = int(os.environ.get("AI_INFER_STRIDE", "1"))  # k프레임마다 1회 추론
@@ -147,18 +152,37 @@ def pad_boxes(boxes, width, height, pad=None):
 
 
 def detect_highlights(path, duration, stage):
-	"""PySceneDetect 장면 전환 기준 상위 3구간. 5초 미만이면 건너뛴다 (MSG-141)."""
+	"""장면 랭킹 상위 최대 3구간 — 각 5초 이상, 시작점 간격 5초 이상 (MSG-353). 5초 미만이면 빈 배열 (MSG-141)."""
+	if duration < HIGHLIGHT_MIN_SEC:
+		return []
 	from scenedetect import ContentDetector, detect
 
 	with stage.track("highlight"):
 		scenes = detect(str(path), ContentDetector())
-	if not scenes:
-		# MSG-159: 한 자리 촬영엔 장면 전환이 없어 0개가 나온다 → 균등 3분할 폴백.
-		# ponytail: 균등 분할 — 추천 품질 불만이 실측되면 움직임량 랭킹으로 승격
-		third = duration / 3
-		return [[round(i * third, 2), round((i + 1) * third, 2)] for i in range(3)]
+	# 장면을 5초 이상 창으로 정규화한 랭킹 후보 뒤에 균등 그리드 보충 후보를 세우고,
+	# 시작점 간격 5초를 지키며 앞에서부터 탐욕 선택한다. 장면 0개(고정 촬영)면 그리드만 남는다 —
+	# 기존 균등 3분할(MSG-159)은 12초 영상에서 4초짜리 구간 3개를 만들어 폐기했다 (docs/MSG-353.md D-3)
 	ranked = sorted(scenes, key=lambda s: (s[1] - s[0]).get_seconds(), reverse=True)
-	return [[round(s.get_seconds(), 2), round(e.get_seconds(), 2)] for s, e in ranked[:3]]
+	candidates = []
+	for s, e in ranked:
+		start, end = s.get_seconds(), e.get_seconds()
+		if end - start < HIGHLIGHT_MIN_SEC:
+			# 짧은 장면은 그 시작점부터 5초 창으로 넓힌다 — 영상 끝을 넘으면 시작점을 앞으로 당긴다
+			start = max(0.0, min(start, duration - HIGHLIGHT_MIN_SEC))
+			end = start + HIGHLIGHT_MIN_SEC
+		candidates.append((start, end))
+	grid_count = min(3, int(duration // HIGHLIGHT_MIN_SEC))
+	# duration >= 5*grid_count 라 균등 배치 간격이 수학적으로 5초 이상 보장된다 (docs/MSG-353.md D-3)
+	step = (duration - HIGHLIGHT_MIN_SEC) / (grid_count - 1) if grid_count > 1 else 0.0
+	candidates += [(i * step, i * step + HIGHLIGHT_MIN_SEC) for i in range(grid_count)]
+
+	picked = []
+	for start, end in candidates:
+		if len(picked) == 3:
+			break
+		if all(abs(start - p[0]) >= HIGHLIGHT_MIN_GAP_SEC for p in picked):
+			picked.append((start, end))
+	return [[round(start, 2), round(end, 2)] for start, end in picked]
 
 
 def sample_frames(path, n):
@@ -398,6 +422,23 @@ def smoke():
 		assert dst.exists() and dst.stat().st_size > 0, "출력 영상이 비었다"
 		assert len(report["highlights"]) <= 3, "하이라이트는 최대 3구간 (MSG-141)"
 		assert report["highlights"], "5초 이상인데 하이라이트 0개 (MSG-159 폴백 미작동)"
+		# MSG-353: 구간 품질 — 각 5초 이상, 시작점 간격 5초 이상 (BE docs/prd/MSG-351-prd.md FR-3)
+		for start, end in report["highlights"]:
+			assert end - start >= HIGHLIGHT_MIN_SEC - 0.01, f"5초 미만 구간 (MSG-353): {report['highlights']}"
+		starts = [start for start, _ in report["highlights"]]
+		assert all(abs(a - b) >= HIGHLIGHT_MIN_GAP_SEC - 0.01
+			for i, a in enumerate(starts) for b in starts[:i]), \
+			f"시작점 간격 5초 미만 (MSG-353): {report['highlights']}"
+		assert detect_highlights(src, 4.0, Stage()) == [], "5초 미만은 빈 배열이어야 한다 (MSG-353)"
+		# 12초 영상은 시작점 간격 5초 제약상 최대 2구간이다 — 구 균등 3분할이 4초짜리 3개를
+		# 만들던 회귀를 여기서 잡는다 (docs/MSG-353.md D-3)
+		twelve = Path(tmp) / "twelve.mp4"
+		make_smoke_video(twelve, seconds=12)
+		twelve_highlights = detect_highlights(twelve, 12.0, Stage())
+		assert 1 <= len(twelve_highlights) <= 2, f"12초 영상 구간 수 위반 (MSG-353): {twelve_highlights}"
+		for start, end in twelve_highlights:
+			assert end - start >= HIGHLIGHT_MIN_SEC - 0.01 and 0 <= start <= 12 - HIGHLIGHT_MIN_SEC + 0.01, \
+				f"12초 영상 구간 경계 위반 (MSG-353): {twelve_highlights}"
 		assert set(report["stages"]) >= {"decode", "infer_face", "encode"}, "단계 계측 누락"
 		assert pad_boxes([(10, 10, 20, 20)], 100, 100, pad=0.1) == [(9, 9, 21, 21)], "박스 확장 오계산"
 		assert pad_boxes([(0, 0, 100, 100)], 100, 100, pad=0.2) == [(0, 0, 100, 100)], "확장이 프레임을 벗어남"

@@ -70,11 +70,16 @@ scp scripts/ec2-deploy.sh <user>@<host>:~/ && ssh <user>@<host> 'bash ec2-deploy
 | `POST` | `/jobs` | multipart `file`로 영상 업로드. 즉시 `202 {job_id, status}` |
 | `GET` | `/jobs/{id}` | `{job_id, status, highlights, error, precheck}` (폴링용) |
 | `GET` | `/jobs/{id}/video` | 블러 처리본 mp4 (h264, 원본 오디오 유지). 완료 전 409 · **프리체크 탈락 409** |
+| `POST` | `/highlights` | multipart `file`. **블러 없이 하이라이트만 동기 계산** → `200 {"highlights": [[시작초, 끝초], …]}`. 열 수 없는 입력은 `422` (MSG-353, 업로드 확정 전 선분석용) |
 | `GET` | `/health` | 컨테이너 헬스체크 |
 
 `status` 전이: `QUEUED → PROCESSING → DONE | FAILED`. BE 매핑 예:
 `PROCESSING`이면 `processing_status = BLURRING`. `highlights`는 완료 시
 `[[시작초, 끝초], …]` 최대 3구간.
+
+하이라이트 구간 품질(MSG-353, `/jobs`·`/highlights` 공통): 각 구간 5초 이상,
+구간 시작점끼리 5초 이상 간격, 배열 순서 = 추천 우선순위(첫 요소가 최우선).
+조건을 지키며 3구간을 못 채우면 개수를 줄인다. **5초 미만 영상은 빈 배열**.
 
 `precheck`(MSG-284)는 추론 전 무의미 영상(암흑·렌즈 가림) 판정 결과다.
 `{passed: bool, reason: string|null}`, 판정 전에는 `null`.
