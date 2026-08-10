@@ -141,6 +141,40 @@ def get_job(job_id: str):
 	return jobs[job_id]
 
 
+def probe_duration(path):
+	"""cv2 메타로 초 단위 길이. 못 열면 ValueError — /highlights 의 422 근거."""
+	cap = cv2.VideoCapture(str(path))
+	if not cap.isOpened():
+		raise ValueError(f"영상을 열 수 없음: {path}")
+	frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+	fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+	cap.release()
+	return frames / fps if fps else 0.0
+
+
+@app.post("/highlights")
+def analyze_highlights(file: UploadFile):
+	"""MSG-353 — 업로드 확정 전 선분석. 블러 없이 하이라이트만 동기 계산한다 (BE MSG-351이 소비).
+
+	YOLO 모델이 필요 없어 워커 큐를 우회한다 — 블러 잡이 3분씩 돌아도 여기는 수 초다 (스펙 D-1).
+	다운스케일 재인코딩도 없다 — 디코딩은 어차피 생략 불가라 재인코딩이 오히려 비싸고,
+	감지 프레임 축소는 PySceneDetect가 내부에서 한다 (스펙 D-2). 잡 상태를 만들지 않으므로
+	실패해도 서버에 아무것도 남지 않고, 원본 3분 상한 검증은 BE 몫이다 (PRD FR-8).
+	"""
+	with tempfile.TemporaryDirectory() as tmp:
+		src = Path(tmp) / "src.mp4"
+		with src.open("wb") as f:
+			shutil.copyfileobj(file.file, f)
+		try:
+			duration = probe_duration(src)
+			# 5초 미만 경계는 detect_highlights 가 빈 배열로 처리한다 (스펙 D-4)
+			highlights = bench.detect_highlights(src, duration, bench.Stage())
+		# bench 가 못 여는 입력에 SystemExit 을 던지므로 Exception 만으로는 부족하다 (worker 와 동일)
+		except (Exception, SystemExit) as e:
+			raise HTTPException(422, f"분석 불가: {str(e) or e.__class__.__name__}")
+	return {"highlights": highlights}
+
+
 @app.get("/jobs/{job_id}/video")
 def get_video(job_id: str):
 	if job_id not in jobs:
@@ -212,6 +246,26 @@ def smoke():
 		assert max(w, h) <= 1920, f"다운스케일 안 됨: {w}x{h}"
 		assert fps <= 30.5, f"30fps 초과: {fps}"
 		print(f"결과: {w}x{h} @ {fps:.0f}fps, highlights={job['highlights']}, precheck={job['precheck']}")
+
+		# MSG-353: 선분석 전용 경로 — 큐를 안 거치는 동기 200. 4K 입력도 재인코딩 없이 직분석한다
+		with src.open("rb") as f:
+			r = client.post("/highlights", files={"file": ("in.mp4", f, "video/mp4")})
+		assert r.status_code == 200, r.text
+		pre = r.json()["highlights"]
+		assert 1 <= len(pre) <= 3, f"6초 영상 선분석 구간 수 위반 (MSG-353): {pre}"
+		for start, end in pre:
+			assert end - start >= 4.99, f"5초 미만 구간 (MSG-353): {pre}"
+
+		short = Path(tmp) / "short.mp4"
+		bench.make_smoke_video(short, seconds=3)
+		with short.open("rb") as f:
+			r = client.post("/highlights", files={"file": ("short.mp4", f, "video/mp4")})
+		assert r.status_code == 200 and r.json() == {"highlights": []}, \
+			f"5초 미만은 빈 배열이어야 한다 (MSG-353): {r.text}"
+
+		r = client.post("/highlights", files={"file": ("bad.mp4", b"not a video", "video/mp4")})
+		assert r.status_code == 422, f"열 수 없는 입력은 422 (MSG-353): {r.status_code}"
+		print(f"선분석 경로: highlights={pre}")
 
 		# MSG-284 탈락 경로. 처리 시간 어서션은 넣지 않는다 — macOS 측정은 무효라
 		# 성능 요건(탈락 잡 ≤ 정상 잡의 1/5)은 dev EC2 실측으로 판정한다 (CLAUDE.md "알아둘 함정")
