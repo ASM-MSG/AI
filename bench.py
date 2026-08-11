@@ -3,6 +3,11 @@
 병목이 AI인지 인코딩인지 가르는 게 목적이라 단계별로 시간을 따로 누적한다.
 정확도 튜닝은 범위 밖 (MSG-142 티켓 명시).
 
+MSG-367: 출력은 mp4v 중간본이 아니라 최종 재생본(h264 + 원본 오디오)이다 — 블러 프레임을
+rawvideo 파이프로 ffmpeg에 흘려 단일 패스로 굽는다. 목적은 세대 손실 제거다 (docs/MSG-367.md).
+`stages.encode`의 의미도 "mp4v 기록"에서 "파이프 쓰기 + 인코더 배압 대기"로 바뀌었다 —
+변경 전 리포트의 stage 비중과 직접 비교하지 말 것.
+
     python bench.py --smoke                        # 합성 영상으로 파이프라인 검증
     python bench.py sample.mp4 --device cpu
     python bench.py sample.mp4 --device mps        # Apple Silicon
@@ -288,7 +293,13 @@ def precheck(path, n_frames=PRECHECK_FRAMES):
 	}
 
 
-def run(path, device, out_path):
+def run(path, device, out_path, audio_src=None):
+	"""블러 + 하이라이트 + 단일 인코딩. out_path가 곧 최종 재생본이다 (MSG-367).
+
+	audio_src=None이면 입력 path를 오디오 원본으로 쓴다 — 단독 CLI 실행도 무음 mp4v 대신
+	오디오 있는 h264를 얻는다. server.process()는 다운스케일본에 오디오가 없어(-an)
+	잡 원본을 명시한다 (docs/MSG-367.md D-1·D-3).
+	"""
 	stage = Stage()
 	wall_start = time.perf_counter()
 
@@ -304,11 +315,23 @@ def run(path, device, out_path):
 	fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 	width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 	height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-	writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+	# MSG-367 D-2·D-3: rawvideo 파이프 단일 인코딩. fps는 cv2가 읽은 소수 그대로 넘긴다 —
+	# 반올림하면 A/V 싱크가 영상 길이에 비례해 밀린다. -map 1:a?의 ?가 오디오 없는 입력을
+	# 에러 없이 무음 재생본으로 만들고, -shortest가 컨테이너 메타 오차로 수십 ms 긴 꼬리
+	# 오디오를 자른다. yuv420p 명시 — bgr24 입력을 그대로 두면 일부 재생기가 못 여는
+	# 픽셀 포맷으로 인코딩될 수 있다.
+	encoder = subprocess.Popen(
+		["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+		 "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{width}x{height}", "-r", str(fps), "-i", "pipe:0",
+		 "-i", str(audio_src if audio_src is not None else path), "-map", "0:v", "-map", "1:a?",
+		 "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+		 str(out_path)],
+		stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 
 	frames = face_hits = plate_hits = inference_batches = 0
 	reused = []
-	while True:
+	pipe_broken = False
+	while not pipe_broken:
 		pending = []
 		while len(pending) < AI_BATCH_SIZE:
 			with stage.track("decode"):
@@ -347,10 +370,27 @@ def run(path, device, out_path):
 			with stage.track("mask"):
 				frame = blur_boxes(frame, boxes)
 			with stage.track("encode"):
-				writer.write(frame)
+				# 인코더가 밀리면 여기가 블록되는 자연 배압 — 그 대기가 encode 항목에 잡힌다 (MSG-367 D-2)
+				try:
+					encoder.stdin.write(frame.tobytes())
+				except BrokenPipeError:
+					# ffmpeg 조기 사망 (D-4) — 남은 프레임을 버리고 아래 반환 코드 검사로 실패를 드러낸다
+					pipe_broken = True
+					break
 
 	cap.release()
-	writer.release()
+	try:
+		encoder.stdin.close()
+	except BrokenPipeError:
+		# 마지막 버퍼 flush에서도 조기 사망이 드러날 수 있다 — 판정은 아래 반환 코드가 한다
+		pass
+	# ponytail: stderr를 드레인 스레드 없이 종료 후 한 번에 읽는다 — -loglevel error라 정상 경로
+	# 출력이 거의 없어 파이프 버퍼가 찰 일이 없다. ffmpeg가 stderr를 쏟는 케이스가 생기면 스레드로 올린다
+	stderr = encoder.stderr.read().decode(errors="replace")
+	if encoder.wait() != 0:
+		# cv2.VideoWriter는 실패해도 조용히 빈 파일을 남겼다 — 파이프판은 잡 FAILED로 드러낸다 (D-4).
+		# 프레임 0장 입력도 ffmpeg가 빈 비디오로 실패해 여기로 온다 — 손상 입력이 성공으로 위장하던 구멍
+		raise RuntimeError(f"ffmpeg 인코딩 실패 (exit {encoder.returncode}): {stderr.strip()}")
 
 	duration = frames / fps if fps else 0
 	highlights = detect_highlights(path, duration, stage) if duration >= 5 else []
@@ -377,14 +417,24 @@ def run(path, device, out_path):
 	}
 
 
-def make_smoke_video(path, seconds=6, fps=30, size=(640, 480)):
-	"""검출 결과가 0건이어도 파이프라인은 완주해야 한다 (MSG-140 완료 조건)."""
-	subprocess.run(
-		["ffmpeg", "-y", "-f", "lavfi", "-i",
-		 f"testsrc=duration={seconds}:size={size[0]}x{size[1]}:rate={fps}",
-		 "-pix_fmt", "yuv420p", str(path)],
-		check=True, capture_output=True,
-	)
+def make_smoke_video(path, seconds=6, fps=30, size=(640, 480), audio=False):
+	"""검출 결과가 0건이어도 파이프라인은 완주해야 한다 (MSG-140 완료 조건).
+
+	audio=True면 lavfi 사인톤을 입힌다 — 재생본의 원본 오디오 유지 검증용 (MSG-367).
+	"""
+	args = ["-f", "lavfi", "-i", f"testsrc=duration={seconds}:size={size[0]}x{size[1]}:rate={fps}"]
+	if audio:
+		args += ["-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}", "-c:a", "aac"]
+	subprocess.run(["ffmpeg", "-y", *args, "-pix_fmt", "yuv420p", str(path)], check=True, capture_output=True)
+
+
+def ffprobe_codec(path, stream="v:0"):
+	"""스트림 코덱명. 스트림이 없으면 빈 문자열 — mp4v 흔적·오디오 유무의 기계 판정용 (MSG-367)."""
+	out = subprocess.run(
+		["ffprobe", "-v", "error", "-select_streams", stream,
+		 "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(path)],
+		check=True, capture_output=True, text=True)
+	return out.stdout.strip()
 
 
 def make_dark_video(path, dark_sec=6, bright_sec=0, size=(640, 480), fps=30):
@@ -420,6 +470,9 @@ def smoke():
 		assert int(out_cap.get(cv2.CAP_PROP_FRAME_COUNT)) == report["frames"], "출력 프레임 수가 입력과 다르다"
 		out_cap.release()
 		assert dst.exists() and dst.stat().st_size > 0, "출력 영상이 비었다"
+		# MSG-367: 재생본에 mp4v 경유 흔적이 없어야 하고, 무음 입력은 무음으로 완주해야 한다 (-map 1:a?)
+		assert ffprobe_codec(dst) == "h264", f"재생본 코덱이 h264가 아니다 (MSG-367): {ffprobe_codec(dst)}"
+		assert ffprobe_codec(dst, "a:0") == "", "무음 입력인데 출력에 오디오 스트림이 생겼다 (MSG-367)"
 		assert len(report["highlights"]) <= 3, "하이라이트는 최대 3구간 (MSG-141)"
 		assert report["highlights"], "5초 이상인데 하이라이트 0개 (MSG-159 폴백 미작동)"
 		# MSG-353: 구간 품질 — 각 5초 이상, 시작점 간격 5초 이상 (BE docs/prd/MSG-351-prd.md FR-3)
@@ -494,6 +547,27 @@ def smoke():
 		assert face_probe.batch_lengths == expected_sizes == plate_probe.batch_lengths, \
 			f"모델별 배치 구성이 다르다: face={face_probe.batch_lengths}, plate={plate_probe.batch_lengths}"
 		assert order_report["frames"] == 7, "마지막 불완전 배치의 프레임이 출력되지 않았다"
+
+		# MSG-367: 오디오 있는 입력의 왕복 — 재생본에 원본 오디오가 실려야 한다 (-map 1:a? + aac)
+		tone_src, tone_dst = Path(tmp) / "tone.mp4", Path(tmp) / "tone-out.mp4"
+		make_smoke_video(tone_src, seconds=6, audio=True)
+		tone_report = run(tone_src, "cpu", tone_dst)
+		assert tone_report["frames"] > 0 and ffprobe_codec(tone_dst) == "h264", \
+			f"오디오 입력 재생본이 h264가 아니다 (MSG-367): {ffprobe_codec(tone_dst)}"
+		assert ffprobe_codec(tone_dst, "a:0") == "aac", \
+			f"오디오가 재생본에 없다 (MSG-367): {ffprobe_codec(tone_dst, 'a:0')!r}"
+
+		# MSG-367 D-4: ffmpeg가 죽으면(못 여는 출력 경로) cv2.VideoWriter처럼 조용히 빈 파일을
+		# 남기지 않고 예외로 드러나야 한다 — 워커가 이 예외를 잡아 잡을 FAILED로 만든다
+		globals()["load_models"] = lambda _device: (face_probe, plate_probe)
+		try:
+			try:
+				run(order_src, "cpu", Path(tmp) / "no-such-dir" / "fail.mp4")
+				raise AssertionError("출력 경로를 못 여는데 예외가 안 났다 (MSG-367 D-4)")
+			except RuntimeError as e:
+				assert "ffmpeg" in str(e), f"실패 예외에 ffmpeg 진단이 없다 (MSG-367 D-4): {e}"
+		finally:
+			globals()["load_models"] = real_load_models
 
 		# MSG-280: 납작한 박스가 실제로 뭉개지는지. 합성 영상엔 검출 대상이 없어 blur_boxes가
 		# 안 타므로 직접 태운다. 30×120에 15px 폭 블록 = 번호판 글자 굵기 근사.
