@@ -1,0 +1,25 @@
+{
+  "ticket": "MSG-367",
+  "purpose": "탐지·블러 동일성 대조 — 변경 전(cv2.VideoWriter mp4v) / 후(ffmpeg rawvideo 파이프) 같은 입력의 detections·프레임 수 비교 (docs/MSG-367.md 검증 계획 3)",
+  "environment": "macOS Apple Silicon, device=cpu — 기능 판정 전용, 성능 수치 아님 (스펙: 기능 판정이라 macOS 허용)",
+  "date": "2026-08-11",
+  "note": "kr-plates는 원본에 aac 오디오가 있어 -shortest·-map 1:a? 경로까지 검증한다. 변경 전 출력은 mp4v·무음, 변경 후 출력은 h264·원본 오디오.",
+  "samples": {
+    "crowd": {
+      "before": {"frames": 720, "face": 10130, "plate": 55, "out_codec": "mpeg4", "out_frames": 720, "out_audio": null},
+      "after": {"frames": 720, "face": 10130, "plate": 55, "out_codec": "h264", "out_frames": 720, "out_audio": null},
+      "identical": true
+    },
+    "plates": {
+      "before": {"frames": 750, "face": 1625, "plate": 702, "out_codec": "mpeg4", "out_frames": 750, "out_audio": null},
+      "after": {"frames": 750, "face": 1625, "plate": 702, "out_codec": "h264", "out_frames": 750, "out_audio": null},
+      "identical": true
+    },
+    "kr-plates": {
+      "before": {"frames": 900, "face": 185, "plate": 628, "out_codec": "mpeg4", "out_frames": 900, "out_audio": null},
+      "after": {"frames": 900, "face": 185, "plate": 628, "out_codec": "h264", "out_frames": 900, "out_audio": "aac"},
+      "identical": true
+    }
+  },
+  "verdict": "PASS — 세 샘플 모두 detections(face·plate)·입출력 프레임 수 동일, 재생본 코덱 mpeg4 → h264"
+}
