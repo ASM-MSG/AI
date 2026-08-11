@@ -46,7 +46,13 @@ def ffmpeg(*args):
 
 
 def downscale(src, dst):
-	"""긴 변 1920 초과면 축소, 30fps 초과면 감쇠. 미달이면 업스케일하지 않는다."""
+	"""긴 변 1920 초과면 축소, 30fps 초과면 감쇠. 분석에 쓸 경로를 반환한다 (MSG-367 D-1).
+
+	필터가 하나도 안 걸리면(BE가 이미 720p로 정규화한 입력) ffmpeg를 돌리지 않고 src를
+	그대로 반환한다 — 무필터 재인코딩은 세대 손실만 보태는 버려질 패스였다. 필터를 태우면
+	-an으로 오디오를 버린다 — 다운스케일본은 프레임 분석에만 쓰이고 최종 오디오는 항상
+	원본에서 가져오므로(bench.run audio_src) 여기서의 aac 인코딩은 버려질 결과물이다.
+	"""
 	cap = cv2.VideoCapture(str(src))
 	if not cap.isOpened():
 		raise ValueError(f"영상을 열 수 없음: {src}")
@@ -55,26 +61,30 @@ def downscale(src, dst):
 	fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 	cap.release()
 
-	args = ["-i", str(src)]
+	filters = []
 	if max(w, h) > 1920:
 		# 세로 영상(2160×3840)도 긴 변 기준으로 줄인다 → 1080×1920
-		args += ["-vf", "scale=1920:1920:force_original_aspect_ratio=decrease:force_divisible_by=2"]
+		filters += ["-vf", "scale=1920:1920:force_original_aspect_ratio=decrease:force_divisible_by=2"]
 	if fps > 30:
-		args += ["-r", "30"]
-	args += ["-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", str(dst)]
-	ffmpeg(*args)
+		# -r 30은 영상 길이를 바꾸지 않으므로 원본 오디오와의 싱크는 유지된다 (docs/MSG-367.md D-1)
+		filters += ["-r", "30"]
+	if not filters:
+		return src
+	ffmpeg("-i", str(src), *filters, "-an", "-c:v", "libx264", "-preset", "veryfast", str(dst))
+	return dst
 
 
 def process(src, out_path, job):
-	"""다운스케일 → 프리체크 → 블러+하이라이트(bench.run) → h264 재인코딩 + 원본 오디오 복원."""
+	"""다운스케일(초과분만) → 프리체크 → 블러+하이라이트+단일 인코딩(bench.run) (MSG-367).
+
+	bench.run의 출력이 곧 최종 재생본이다 — 별도 병합 패스와 mp4v 중간 파일이 없다.
+	"""
 	with tempfile.TemporaryDirectory() as tmp:
-		scaled = Path(tmp) / "scaled.mp4"
-		raw = Path(tmp) / "raw.mp4"  # bench.run 출력 — mp4v·무음이라 그대로 못 내보낸다
-		downscale(src, scaled)
+		analysis = downscale(src, Path(tmp) / "scaled.mp4")
 		# MSG-284: 판정은 다운스케일 **다음**이다. 다운스케일은 전체 처리에서 차지하는 비중이 작아
 		# 앞에서 걸러도 아끼는 게 없고, 4K 원본 판정은 프레임당 비용이 다운스케일본의 ~6배다.
 		# 게다가 1080p로 정규화하면 분리 마진이 11.5배 → 14.2배로 넓어진다 (results/MSG-284-report.md)
-		check = bench.precheck(scaled)
+		check = bench.precheck(analysis)
 		# MSG-284 FR-7: 판정 **직후** 남긴다 — 뒤로 미루면 정상 영상은 3분 뒤에나 찍히고,
 		# 그 사이 추론이 실패하면 영영 안 남는다. 실패한 잡일수록 판정 수치가 궁금하다.
 		# 잡 디렉터리 이름이 곧 job_id다 (JOBS_DIR/{job_id}/src.mp4)
@@ -87,9 +97,8 @@ def process(src, out_path, job):
 			# 탈락 잡은 추론·하이라이트·재인코딩을 전부 건너뛴다.
 			# out.mp4를 만들지 않는 것이 곧 원본 유출 차단이다 (PRD FR-6)
 			return {"highlights": []}
-		report = bench.run(scaled, DEVICE, raw)
-		ffmpeg("-i", str(raw), "-i", str(scaled), "-map", "0:v", "-map", "1:a?",
-			"-c:v", "libx264", "-preset", "veryfast", "-c:a", "copy", str(out_path))
+		# 오디오는 항상 잡 원본에서 가져온다 — 다운스케일을 탔으면 분석 입력에 오디오가 없다 (MSG-367 D-1·D-3)
+		report = bench.run(analysis, DEVICE, out_path, audio_src=src)
 	return report
 
 
@@ -200,8 +209,8 @@ def smoke():
 		assert len(globals().get("worker_threads", [])) == expected_workers, "설정한 워커 수와 다르다"
 		assert all(thread.is_alive() for thread in globals().get("worker_threads", [])), "종료된 워커가 있다"
 		src = Path(tmp) / "in.mp4"
-		# 4K 60fps로 만들어 다운스케일 경로까지 태운다
-		bench.make_smoke_video(src, seconds=6, fps=60, size=(3840, 2160))
+		# 4K 60fps + 사인톤으로 만들어 다운스케일 경로와 원본 오디오 복원(MSG-367 D-3)까지 태운다
+		bench.make_smoke_video(src, seconds=6, fps=60, size=(3840, 2160), audio_sec=6)
 
 		client = TestClient(app)
 		assert client.get("/health").json() == {"status": "ok"}
@@ -245,7 +254,29 @@ def smoke():
 		cap.release()
 		assert max(w, h) <= 1920, f"다운스케일 안 됨: {w}x{h}"
 		assert fps <= 30.5, f"30fps 초과: {fps}"
+		# MSG-367: 재생본에 mp4v 경유 흔적이 없고, 다운스케일본이 -an이어도 오디오는 원본에서 복원된다
+		assert bench.ffprobe_codec(out) == "h264", f"재생본 코덱이 h264가 아니다 (MSG-367): {bench.ffprobe_codec(out)}"
+		assert bench.ffprobe_codec(out, "a:0") == "aac", \
+			f"원본 오디오가 재생본에 없다 (MSG-367): {bench.ffprobe_codec(out, 'a:0')!r}"
 		print(f"결과: {w}x{h} @ {fps:.0f}fps, highlights={job['highlights']}, precheck={job['precheck']}")
+
+		# MSG-367 D-1: BE 정규화 경로(긴 변 ≤ 1920 · ≤ 30fps)는 재인코딩 없이 원본을 그대로 분석한다
+		p720 = Path(tmp) / "p720.mp4"
+		bench.make_smoke_video(p720, seconds=6, fps=30, size=(1280, 720))
+		bypass_dst = Path(tmp) / "bypass-scaled.mp4"
+		assert downscale(p720, bypass_dst) == p720, "무필터 입력인데 다운스케일 바이패스가 안 됐다 (MSG-367 D-1)"
+		assert not bypass_dst.exists(), "바이패스인데 재인코딩 산출물이 생겼다 (MSG-367 D-1)"
+		bypass_job = wait_done(upload(p720))
+		assert bypass_job["status"] == "DONE", f"바이패스 잡 실패 (MSG-367): {bypass_job}"
+		bypass_out = Path(tmp) / "bypass-out.mp4"
+		bypass_out.write_bytes(client.get(f"/jobs/{bypass_job['job_id']}/video").content)
+		assert bench.ffprobe_codec(bypass_out) == "h264", \
+			f"바이패스 재생본이 h264가 아니다 (MSG-367): {bench.ffprobe_codec(bypass_out)}"
+		cap = cv2.VideoCapture(str(bypass_out))
+		bw, bh = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+		cap.release()
+		assert (bw, bh) == (1280, 720), f"바이패스인데 해상도가 변했다 (MSG-367): {bw}x{bh}"
+		print(f"바이패스 경로: {bw}x{bh}, highlights={bypass_job['highlights']}")
 
 		# MSG-353: 선분석 전용 경로 — 큐를 안 거치는 동기 200. 4K 입력도 재인코딩 없이 직분석한다
 		with src.open("rb") as f:
