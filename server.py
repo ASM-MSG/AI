@@ -210,7 +210,7 @@ def smoke():
 		assert all(thread.is_alive() for thread in globals().get("worker_threads", [])), "종료된 워커가 있다"
 		src = Path(tmp) / "in.mp4"
 		# 4K 60fps + 사인톤으로 만들어 다운스케일 경로와 원본 오디오 복원(MSG-367 D-3)까지 태운다
-		bench.make_smoke_video(src, seconds=6, fps=60, size=(3840, 2160), audio=True)
+		bench.make_smoke_video(src, seconds=6, fps=60, size=(3840, 2160), audio_sec=6)
 
 		client = TestClient(app)
 		assert client.get("/health").json() == {"status": "ok"}

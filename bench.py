@@ -61,6 +61,10 @@ BRIGHT_LEVEL = 64
 HIGHLIGHT_MIN_SEC = 5.0
 HIGHLIGHT_MIN_GAP_SEC = 5.0
 
+# MSG-367: stdin을 닫은 뒤 ffmpeg 잔여 플러시 대기 상한(초). 배압 구조상 파이프에 남는 건
+# 프레임 몇 장이라 정상 플러시는 수 초다 — 넘기면 행으로 보고 kill해 워커를 살린다.
+ENCODER_FLUSH_TIMEOUT_SEC = 60
+
 # MSG-207: 추론 백엔드·프레임 스트라이드. 실측 결과 두 노브 모두 미채택 — 기본값이 정본.
 BACKEND = os.environ.get("AI_BACKEND", "torch")             # torch | openvino
 INFER_STRIDE = int(os.environ.get("AI_INFER_STRIDE", "1"))  # k프레임마다 1회 추론
@@ -317,77 +321,107 @@ def run(path, device, out_path, audio_src=None):
 	height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 	# MSG-367 D-2·D-3: rawvideo 파이프 단일 인코딩. fps는 cv2가 읽은 소수 그대로 넘긴다 —
 	# 반올림하면 A/V 싱크가 영상 길이에 비례해 밀린다. -map 1:a?의 ?가 오디오 없는 입력을
-	# 에러 없이 무음 재생본으로 만들고, -shortest가 컨테이너 메타 오차로 수십 ms 긴 꼬리
-	# 오디오를 자른다. yuv420p 명시 — bgr24 입력을 그대로 두면 일부 재생기가 못 여는
+	# 에러 없이 무음 재생본으로 만든다(그때 -af apad는 조용히 무시된다 — 실측 확인).
+	# -af apad는 오디오를 무음으로 영상 끝까지 채워 -shortest의 기준을 항상 영상으로 만든다 —
+	# -shortest 단독은 오디오가 영상보다 짧은 정상 입력에서 오디오 EOF에 stdin을 닫고 exit 0으로
+	# 끝나, 절단된 재생본이 정상 완료로 위장한다. 영상보다 긴 꼬리 오디오는 여전히 영상 끝에서
+	# 잘린다(D-3 의도 불변). yuv420p 명시 — bgr24 입력을 그대로 두면 일부 재생기가 못 여는
 	# 픽셀 포맷으로 인코딩될 수 있다.
+	# stderr는 파이프가 아니라 임시 파일로 받는다 — 파이프는 손상 오디오가 에러를 쏟아 64KB
+	# 버퍼가 차면 ffmpeg(stderr 쓰기)와 파이썬(stdin 쓰기)이 상호 블록되고, AI_WORKERS=1이라
+	# 잡 하나가 큐 전체를 영구 정지시킨다 (D-4).
+	stderr_file = tempfile.TemporaryFile()
 	encoder = subprocess.Popen(
 		["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
 		 "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{width}x{height}", "-r", str(fps), "-i", "pipe:0",
-		 "-i", str(audio_src if audio_src is not None else path), "-map", "0:v", "-map", "1:a?",
+		 "-i", str(audio_src if audio_src is not None else path), "-map", "0:v", "-map", "1:a?", "-af", "apad",
+		 # 홀수 해상도 방어 (Codex 라운드3) — 변경 전 동작은 입력 픽셀 포맷에 따라 갈렸다:
+		 # 420p 홀수(실입력 대부분)는 패스 2 libx264에서 동일 실패, 444 등 홀수 허용 포맷은
+		 # VideoWriter가 조용히 1px 크롭해 완주. 파이프판(bgr24→yuv420p 강제)은 양쪽 다 실패로
+		 # 만들므로 pad가 크롭 아닌 1px 패딩으로 전부 완주하게 복원·개선한다(픽셀 유실 없음).
+		 # BE 정규화 입력은 항상 짝수라 도달 경로는 CLI·직접 업로드뿐. 탐지·블러는 파이프 이전
+		 # 원본 프레임에서 끝나므로 좌표 무관, 우/하단 1px 검은 테두리만 붙는다
+		 "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
 		 "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
 		 str(out_path)],
-		stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+		stdin=subprocess.PIPE, stderr=stderr_file)
 
 	frames = face_hits = plate_hits = inference_batches = 0
 	reused = []
 	pipe_broken = False
-	while not pipe_broken:
-		pending = []
-		while len(pending) < AI_BATCH_SIZE:
-			with stage.track("decode"):
-				ok, frame = cap.read()
-			if not ok:
-				break
-			pending.append((frames, frame))
-			frames += 1
-		if not pending:
-			break
-
-		infer_frames = [frame for index, frame in pending if index % INFER_STRIDE == 0]
-		face_results = plate_results = []
-		if infer_frames:
-			with stage.track("infer_face"):
-				face_results = face.predict(infer_frames, conf=FACE_CONF, verbose=False)
-			with stage.track("infer_plate"):
-				plate_results = plate.predict(infer_frames, conf=PLATE_CONF, verbose=False)
-			inference_batches += 1
-
-		result_index = 0
-		for index, frame in pending:
-			if index % INFER_STRIDE == 0:
-				fb = to_boxes(face_results[result_index], width, height)
-				pb = to_boxes(plate_results[result_index], width, height)
-				result_index += 1
-				face_hits += len(fb)
-				plate_hits += len(pb)
-				boxes = fb + pb
-				reused = pad_boxes(boxes, width, height)
-			else:
-				# MSG-207: 스킵 프레임은 직전 추론 박스의 확장본을 재사용한다.
-				# 커버리지 근거는 results/MSG-207-report.md (stride·pad 시뮬레이션)
-				boxes = reused
-
-			with stage.track("mask"):
-				frame = blur_boxes(frame, boxes)
-			with stage.track("encode"):
-				# 인코더가 밀리면 여기가 블록되는 자연 배압 — 그 대기가 encode 항목에 잡힌다 (MSG-367 D-2)
-				try:
-					encoder.stdin.write(frame.tobytes())
-				except BrokenPipeError:
-					# ffmpeg 조기 사망 (D-4) — 남은 프레임을 버리고 아래 반환 코드 검사로 실패를 드러낸다
-					pipe_broken = True
-					break
-
-	cap.release()
+	loop_ok = False  # 예외 경로 판별용 — finally에서 kill 선행 여부를 가른다 (Codex 라운드2)
 	try:
-		encoder.stdin.close()
-	except BrokenPipeError:
-		# 마지막 버퍼 flush에서도 조기 사망이 드러날 수 있다 — 판정은 아래 반환 코드가 한다
-		pass
-	# ponytail: stderr를 드레인 스레드 없이 종료 후 한 번에 읽는다 — -loglevel error라 정상 경로
-	# 출력이 거의 없어 파이프 버퍼가 찰 일이 없다. ffmpeg가 stderr를 쏟는 케이스가 생기면 스레드로 올린다
-	stderr = encoder.stderr.read().decode(errors="replace")
-	if encoder.wait() != 0:
+		while not pipe_broken:
+			pending = []
+			while len(pending) < AI_BATCH_SIZE:
+				with stage.track("decode"):
+					ok, frame = cap.read()
+				if not ok:
+					break
+				pending.append((frames, frame))
+				frames += 1
+			if not pending:
+				break
+
+			infer_frames = [frame for index, frame in pending if index % INFER_STRIDE == 0]
+			face_results = plate_results = []
+			if infer_frames:
+				with stage.track("infer_face"):
+					face_results = face.predict(infer_frames, conf=FACE_CONF, verbose=False)
+				with stage.track("infer_plate"):
+					plate_results = plate.predict(infer_frames, conf=PLATE_CONF, verbose=False)
+				inference_batches += 1
+
+			result_index = 0
+			for index, frame in pending:
+				if index % INFER_STRIDE == 0:
+					fb = to_boxes(face_results[result_index], width, height)
+					pb = to_boxes(plate_results[result_index], width, height)
+					result_index += 1
+					face_hits += len(fb)
+					plate_hits += len(pb)
+					boxes = fb + pb
+					reused = pad_boxes(boxes, width, height)
+				else:
+					# MSG-207: 스킵 프레임은 직전 추론 박스의 확장본을 재사용한다.
+					# 커버리지 근거는 results/MSG-207-report.md (stride·pad 시뮬레이션)
+					boxes = reused
+
+				with stage.track("mask"):
+					frame = blur_boxes(frame, boxes)
+				with stage.track("encode"):
+					# 인코더가 밀리면 여기가 블록되는 자연 배압 — 그 대기가 encode 항목에 잡힌다 (MSG-367 D-2)
+					try:
+						encoder.stdin.write(frame.tobytes())
+					except BrokenPipeError:
+						# ffmpeg 조기 사망 (D-4) — 남은 프레임을 버리고 아래 반환 코드 검사로 실패를 드러낸다
+						pipe_broken = True
+						break
+		loop_ok = True
+	finally:
+		# 추론·박스 변환·블러가 예외를 던져도 인코더를 회수한다 — 워커는 잡 간 지속되므로
+		# 안 거두면 실패 잡마다 ffmpeg 프로세스와 fd가 누적된다 (D-4)
+		cap.release()
+		if not loop_ok:
+			# 예외 경로는 kill 선행 (Codex 라운드2) — 인코더가 가득 찬 파이프에서 스톨해 있으면
+			# close()의 잔여 버퍼 flush가 아래 wait(timeout)에 닿기 전에 영구 블록된다. 죽이고 나면
+			# flush는 BrokenPipeError/OSError로 아래 가드에 잡히고, 이 경로의 출력은 어차피 버려진다.
+			# 정상·pipe_broken 경로는 꼬리 프레임 flush가 필요하거나 이미 죽어 있어 kill하지 않는다
+			encoder.kill()
+		try:
+			encoder.stdin.close()
+		except (BrokenPipeError, OSError):
+			# 마지막 버퍼 flush에서도 조기 사망이 드러날 수 있다 — 판정은 아래 반환 코드가 한다
+			pass
+		try:
+			encoder.wait(timeout=ENCODER_FLUSH_TIMEOUT_SEC)
+		except subprocess.TimeoutExpired:
+			encoder.kill()
+			encoder.wait()
+		stderr_file.seek(0)
+		stderr = stderr_file.read().decode(errors="replace")
+		stderr_file.close()
+	if encoder.returncode != 0:
 		# cv2.VideoWriter는 실패해도 조용히 빈 파일을 남겼다 — 파이프판은 잡 FAILED로 드러낸다 (D-4).
 		# 프레임 0장 입력도 ffmpeg가 빈 비디오로 실패해 여기로 온다 — 손상 입력이 성공으로 위장하던 구멍
 		raise RuntimeError(f"ffmpeg 인코딩 실패 (exit {encoder.returncode}): {stderr.strip()}")
@@ -417,15 +451,19 @@ def run(path, device, out_path, audio_src=None):
 	}
 
 
-def make_smoke_video(path, seconds=6, fps=30, size=(640, 480), audio=False):
+def make_smoke_video(path, seconds=6, fps=30, size=(640, 480), audio_sec=None):
 	"""검출 결과가 0건이어도 파이프라인은 완주해야 한다 (MSG-140 완료 조건).
 
-	audio=True면 lavfi 사인톤을 입힌다 — 재생본의 원본 오디오 유지 검증용 (MSG-367).
+	audio_sec는 lavfi 사인톤 길이(초), None이면 무음 — 재생본의 원본 오디오 유지 검증용 (MSG-367).
+	영상보다 짧게 주면 -shortest가 영상을 절단하던 회귀(-af apad로 수정)를 검증하는 입력이 된다.
 	"""
 	args = ["-f", "lavfi", "-i", f"testsrc=duration={seconds}:size={size[0]}x{size[1]}:rate={fps}"]
-	if audio:
-		args += ["-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}", "-c:a", "aac"]
-	subprocess.run(["ffmpeg", "-y", *args, "-pix_fmt", "yuv420p", str(path)], check=True, capture_output=True)
+	if audio_sec:
+		args += ["-f", "lavfi", "-i", f"sine=frequency=440:duration={audio_sec}", "-c:a", "aac"]
+	# 홀수 해상도 입력은 yuv444p로 만든다 — yuv420p+libx264는 홀수 폭/높이를 못 굽는다.
+	# 444는 크로마 서브샘플링이 없어 홀수가 허용된다 (run()의 pad 방어 검증용 입력, MSG-367)
+	pix_fmt = "yuv420p" if size[0] % 2 == 0 and size[1] % 2 == 0 else "yuv444p"
+	subprocess.run(["ffmpeg", "-y", *args, "-pix_fmt", pix_fmt, str(path)], check=True, capture_output=True)
 
 
 def ffprobe_codec(path, stream="v:0"):
@@ -548,14 +586,26 @@ def smoke():
 			f"모델별 배치 구성이 다르다: face={face_probe.batch_lengths}, plate={plate_probe.batch_lengths}"
 		assert order_report["frames"] == 7, "마지막 불완전 배치의 프레임이 출력되지 않았다"
 
-		# MSG-367: 오디오 있는 입력의 왕복 — 재생본에 원본 오디오가 실려야 한다 (-map 1:a? + aac)
+		# MSG-367: 오디오 있는 입력의 왕복 — 재생본에 원본 오디오가 실려야 하고(-map 1:a? + aac),
+		# 오디오(3초)가 영상(6초)보다 짧아도 영상이 절단되면 안 된다 — -shortest 단독이던 시절
+		# 오디오 EOF에 exit 0으로 절단되던 P1 회귀를 -af apad로 막았다.
+		# 해상도를 홀수(639x361)로 잡아 pad 방어(라운드3)도 같은 실경로에서 검증한다 —
+		# 출력은 640x362로 패딩되고 프레임 수는 보존돼야 한다
 		tone_src, tone_dst = Path(tmp) / "tone.mp4", Path(tmp) / "tone-out.mp4"
-		make_smoke_video(tone_src, seconds=6, audio=True)
+		make_smoke_video(tone_src, seconds=6, size=(639, 361), audio_sec=3)
 		tone_report = run(tone_src, "cpu", tone_dst)
 		assert tone_report["frames"] > 0 and ffprobe_codec(tone_dst) == "h264", \
 			f"오디오 입력 재생본이 h264가 아니다 (MSG-367): {ffprobe_codec(tone_dst)}"
 		assert ffprobe_codec(tone_dst, "a:0") == "aac", \
 			f"오디오가 재생본에 없다 (MSG-367): {ffprobe_codec(tone_dst, 'a:0')!r}"
+		tone_cap = cv2.VideoCapture(str(tone_dst))
+		assert int(tone_cap.get(cv2.CAP_PROP_FRAME_COUNT)) == tone_report["frames"], \
+			"짧은 오디오 입력에서 영상이 절단됐다 (MSG-367 -shortest+apad 회귀)"
+		tone_w = int(tone_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+		tone_h = int(tone_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+		tone_cap.release()
+		assert (tone_w, tone_h) == (640, 362), \
+			f"홀수 해상도가 짝수로 패딩되지 않았다 (MSG-367 라운드3): {tone_w}x{tone_h}"
 
 		# MSG-367 D-4: ffmpeg가 죽으면(못 여는 출력 경로) cv2.VideoWriter처럼 조용히 빈 파일을
 		# 남기지 않고 예외로 드러나야 한다 — 워커가 이 예외를 잡아 잡을 FAILED로 만든다
@@ -568,6 +618,23 @@ def smoke():
 				assert "ffmpeg" in str(e), f"실패 예외에 ffmpeg 진단이 없다 (MSG-367 D-4): {e}"
 		finally:
 			globals()["load_models"] = real_load_models
+
+		# MSG-367 라운드2: 추론·블러 예외 경로(loop_ok=False, kill 선행) — finally가 인코더를
+		# 회수하면서 원예외를 치환·유실하지 않고 그대로 전파해야 한다. 위 D-4 케이스는
+		# BrokenPipe→정상 루프 이탈 경로라 이 분기를 타지 않는다
+		def exploding_blur(frame, boxes):
+			raise ValueError("주입한 블러 실패")
+
+		globals()["load_models"] = lambda _device: (face_probe, plate_probe)
+		globals()["blur_boxes"] = exploding_blur
+		try:
+			try:
+				run(order_src, "cpu", Path(tmp) / "boom.mp4")
+				raise AssertionError("주입한 예외가 전파되지 않았다 (MSG-367 라운드2)")
+			except ValueError as e:
+				assert "주입한 블러 실패" in str(e), f"원예외가 치환됐다 (MSG-367 라운드2): {e}"
+		finally:
+			globals()["load_models"], globals()["blur_boxes"] = real_load_models, real_blur_boxes
 
 		# MSG-280: 납작한 박스가 실제로 뭉개지는지. 합성 영상엔 검출 대상이 없어 blur_boxes가
 		# 안 타므로 직접 태운다. 30×120에 15px 폭 블록 = 번호판 글자 굵기 근사.
