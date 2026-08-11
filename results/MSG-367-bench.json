@@ -1,0 +1,39 @@
+{
+	"ticket": "MSG-367",
+	"date": "2026-08-11",
+	"instance": "AI 전용 t3.small (i-0b5828e26d4bc7dec, ap-northeast-2)",
+	"method": "scripts/ec2-ai-load-test.sh N=1, 유휴 상태에서 순차 3회. POST /jobs 제출부터 DONE까지의 API 왕복 초",
+	"sample": "crowd 29초 1080p 30fps 무음 (Pexels 855564, libx264 veryfast 재인코딩, 두 버전이 같은 파일 재사용)",
+	"before": {
+		"commit": "c5f36a6 ([Merge] MSG-353 docs — 머지 직전 main, 임시 브랜치 feature/MSG-367-baseline로 배포)",
+		"total_s": [221, 221, 218],
+		"median_s": 221,
+		"mem_used_peak_mb": [1197, 1187, 1190],
+		"swap_io_consecutive_peak": [1, 1, 2],
+		"result_size_bytes": 8985532,
+		"result_duration_s": 29.029029,
+		"result_codec": "h264",
+		"oom_or_restart": false
+	},
+	"after": {
+		"commit": "main (PR #24 머지, CD 31453264482 배포)",
+		"total_s": [199, 192, 184],
+		"median_s": 192,
+		"mem_used_peak_mb": [1152, 1113, 1191],
+		"swap_io_consecutive_peak": [3, 1, 1],
+		"result_size_bytes": 7016204,
+		"result_duration_s": 29.029,
+		"result_codec": "h264",
+		"oom_or_restart": false
+	},
+	"delta": {
+		"median_s": -29,
+		"median_pct": -13.1,
+		"result_size_pct": -21.9
+	},
+	"notes": [
+		"mem_used_peak는 호스트 전체 사용량(free -m used) — MSG-339의 파이썬 프로세스 피크(503.7MB)와 계측 단위가 다르다",
+		"swap_used 절대값은 배포 재시작 경계를 넘어 비교 불가(변경 후 ~331MB, 변경 전 ~75MB는 호스트 잔여분)",
+		"after-run1의 스왑 I/O 연속 3회는 배포 직후 첫 잡의 모델 로드 워밍업 — swap_used 증가 없음, OOM·재시작 0, 이후 2회는 연속 1회"
+	]
+}
