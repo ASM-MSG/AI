@@ -8,6 +8,7 @@ GET /jobs/{id}를 폴링해 processing_status를 갱신한다. 계약은 README 
     python server.py --smoke        # 합성 영상으로 API 왕복 검증
 
     AI_WORKERS=1                    # 허용값 1·2. 채택값은 results/MSG-339-report.md에서 확정
+    ROUTE_AI_ENABLED=1              # MSG-458 경로 추천(/route/*) 활성 — 노브 4종 상세는 route_ai.py 상단
 
 블러·하이라이트 로직은 bench.py를 그대로 쓴다 — 서버는 껍데기다.
 """
@@ -28,12 +29,14 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 import bench
+import route_ai
 
 DEVICE = os.environ.get("DEVICE", "cpu")
 JOBS_DIR = Path(os.environ.get("JOBS_DIR", "jobs"))
 AI_WORKERS = int(os.environ.get("AI_WORKERS", "1"))
 if AI_WORKERS not in (1, 2):
 	raise ValueError("AI_WORKERS는 1, 2만 허용")
+route_ai.validate_env()  # ROUTE_AI_ENABLED=1인데 키 없으면 기동 실패 (MSG-458 D-2, AI_WORKERS 검증 선례)
 
 # ponytail: 인메모리 잡 저장소라 재시작하면 진행 중 잡이 유실된다.
 # 실제 유실이 생기면 SQLite로 올린다.
@@ -198,6 +201,34 @@ def get_video(job_id: str):
 	return FileResponse(JOBS_DIR / job_id / "out.mp4", media_type="video/mp4")
 
 
+# MSG-458: 경로 추천 언어 처리 — 동기, 워커 큐 우회 (D-1). 로직은 route_ai에 있고 여기는 상태 코드 매핑뿐이다
+
+
+def route_call(pipeline, request):
+	"""플래그 게이트 + route_ai outcome → 상태 코드 매핑 (MSG-458 계약 실패 표).
+
+	detail에 사용자 문장·모델 출력 원문을 담지 않는다 (NFR-SEC-09).
+	"""
+	if not route_ai.is_enabled():
+		raise HTTPException(503, "route AI disabled")
+	try:
+		return pipeline(request)
+	except route_ai.RouteAiError as e:
+		if e.outcome == "timeout":
+			raise HTTPException(504, "모델 응답 시간 초과")
+		raise HTTPException(502, "해석 실패")  # model_error·shape_reject — BE는 전부 실패로 받는다 (FR-ROUTE-08)
+
+
+@app.post("/route/parse")
+def route_parse(request: route_ai.ParseRequest):
+	return route_call(route_ai.parse_route, request)
+
+
+@app.post("/route/explain")
+def route_explain(request: route_ai.ExplainRequest):
+	return route_call(route_ai.explain_route, request)
+
+
 def smoke():
 	"""합성 영상으로 API 왕복(업로드 → 폴링 → 결과 다운로드) 검증."""
 	global JOBS_DIR
@@ -322,6 +353,66 @@ def smoke():
 		assert broken_job["status"] == "FAILED", f"손상 입력이 FAILED가 아니다: {broken_job}"
 		assert all(client.get(f"/jobs/{job_id}").json()["status"] == "DONE" for job_id in job_ids), \
 			"손상 입력이 정상 작업 상태를 바꿨다"
+		# MSG-458: 경로 추천 엔드포인트. 플래그 off(기본)는 두 경로 다 명시적 503 (PRD 운영 비기능)
+		import httpx
+
+		parse_body = {"text": "부산역 내려서 해운대에서 밥 먹고 축제도 보고 싶어",
+			"viewport": {"min_lat": 35.05, "min_lng": 128.95, "max_lat": 35.25, "max_lng": 129.20}}
+		explain_body = {"points": [
+			{"name": "해운대 빛축제", "kind": "mission_festival", "facts": ["2026-08-01~08-31 진행 중"]},
+			{"name": "광안리 해변", "kind": "place", "facts": ["이전 지점에서 1.2km"]},
+		]}
+		assert not route_ai.is_enabled(), "route 스모크는 플래그 기본(꺼짐) 상태를 전제한다"
+		for path, body in (("/route/parse", parse_body), ("/route/explain", explain_body)):
+			r = client.post(path, json=body)
+			assert r.status_code == 503, f"플래그 off인데 {path}가 503이 아니다: {r.status_code}"
+
+		# 플래그 on + call_model 스텁 왕복 — is_enabled() 요청 시점 조회(route_ai 전역 재대입)를 실제로 태운다
+		saved_enabled, real_call_model = route_ai.ROUTE_AI_ENABLED, route_ai.call_model
+
+		def route_stub(raw):
+			def _stub(system, user, timeout, response_format):
+				if isinstance(raw, Exception):
+					raise raw
+				return raw
+			route_ai.call_model = _stub
+
+		route_ai.ROUTE_AI_ENABLED = True
+		try:
+			route_stub('{"region": "해운대", "period": {"start": "2026-08-22", "end": "2026-08-23"},'
+				' "interests": ["맛집", "축제"], "preferred_order": ["부산역", "해운대 식사", "축제"]}')
+			r = client.post("/route/parse", json=parse_body)
+			assert r.status_code == 200, f"parse 왕복 실패: {r.status_code} {r.text}"
+			assert r.json() == {"region": "해운대", "period": {"start": "2026-08-22", "end": "2026-08-23"},
+				"interests": ["맛집", "축제"], "preferred_order": ["부산역", "해운대 식사", "축제"]}, \
+				f"parse 200 형태 위반: {r.json()}"
+
+			route_stub('{"reasons": ["8월 말까지 열리는 빛축제입니다.", "식사 후 걷기 좋은 바다 지점입니다."]}')
+			r = client.post("/route/explain", json=explain_body)
+			assert r.status_code == 200, f"explain 왕복 실패: {r.status_code} {r.text}"
+			reasons = r.json()["reasons"]
+			assert len(reasons) == 2 and reasons[0].startswith("8월"), f"explain 개수·순서 위반: {reasons}"
+
+			route_stub('{"region": "해운대", "places": ["가짜 축제"]}')  # 미정의 필드 — 형태 위반 (FR-ROUTE-08)
+			r = client.post("/route/parse", json=parse_body)
+			assert r.status_code == 502, f"형태 위반이 502가 아니다: {r.status_code}"
+			assert "해운대" not in r.text and "places" not in r.text, \
+				f"502 detail에 모델 출력 원문이 샜다 (NFR-SEC-09): {r.text}"
+
+			route_stub(httpx.TimeoutException("모의 타임아웃"))
+			r = client.post("/route/parse", json=parse_body)
+			assert r.status_code == 504, f"모델 타임아웃이 504가 아니다: {r.status_code}"
+
+			r = client.post("/route/parse", json={"viewport": parse_body["viewport"]})  # text 결손
+			assert r.status_code == 422, f"text 결손이 422가 아니다: {r.status_code}"
+		finally:
+			route_ai.ROUTE_AI_ENABLED, route_ai.call_model = saved_enabled, real_call_model
+		assert client.post("/route/parse", json=parse_body).status_code == 503, "플래그 복원 후에도 켜져 있다"
+		# D-1: 동기 경로는 잡 상태를 만들지도 바꾸지도 않는다
+		assert all(client.get(f"/jobs/{job_id}").json()["status"] == "DONE" for job_id in job_ids), \
+			"route 호출이 기존 잡 상태를 바꿨다"
+		print("route 경로: 503/200/502/504/422 OK")
+
 		print("smoke OK")
 
 
