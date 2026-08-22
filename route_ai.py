@@ -20,7 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, List, Optional
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 KST = timezone(timedelta(hours=9))  # KST는 DST 없는 고정 오프셋 — 컨테이너 tzdata 유무에 안 걸린다
 OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"  # SDK 없이 REST 직접 호출 (D-2, 2026-08-22 확정)
@@ -28,8 +28,9 @@ OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"  # SDK 없이 RES
 # 환경변수 노브 4종 — server.py의 AI_WORKERS 선례. 켜짐/키 정합은 validate_env()가 기동 시 판정한다
 ROUTE_AI_ENABLED = os.environ.get("ROUTE_AI_ENABLED") == "1"  # 기본 꺼짐 — 꺼진 환경은 엔드포인트가 503 (D-2)
 ROUTE_AI_API_KEY = os.environ.get("ROUTE_AI_API_KEY", "")
-ROUTE_AI_MODEL = os.environ.get("ROUTE_AI_MODEL", "gpt-4o-mini")  # 기본값은 2026-08-22 성민 확정 (D-2)
-ROUTE_AI_TIMEOUT_SEC = float(os.environ.get("ROUTE_AI_TIMEOUT_SEC", "30"))  # 잠정 30초 — 성능 주장 아님 (D-2)
+# 아래 두 노브는 빈 문자열도 미설정으로 취급한다 — 배포 스크립트가 -e VAR=""로 넘겨도 기본값이 살도록 (ec2-deploy.sh)
+ROUTE_AI_MODEL = os.environ.get("ROUTE_AI_MODEL") or "gpt-4o-mini"  # 기본값은 2026-08-22 성민 확정 (D-2)
+ROUTE_AI_TIMEOUT_SEC = float(os.environ.get("ROUTE_AI_TIMEOUT_SEC") or "30")  # 잠정 30초 — 성능 주장 아님 (D-2)
 
 # 계약 길이·개수 상한 — docs/MSG-458.md 계약 변경 절 (2026-08-22 성민 확정). BE 스펙(MSG-457)이 소비한다
 PARSE_TEXT_MAX = 500  # parse 요청 text 길이
@@ -114,10 +115,17 @@ class Viewport(BaseModel):
 	"""WGS84 위경도 사각형 — "이 근처" 같은 상대 표현 해석 재료 (계약 변경 절)."""
 
 	model_config = ConfigDict(extra="forbid")
-	min_lat: float
-	min_lng: float
-	max_lat: float
-	max_lng: float
+	min_lat: float = Field(ge=-90, le=90, allow_inf_nan=False)
+	min_lng: float = Field(ge=-180, le=180, allow_inf_nan=False)
+	max_lat: float = Field(ge=-90, le=90, allow_inf_nan=False)
+	max_lng: float = Field(ge=-180, le=180, allow_inf_nan=False)
+
+	@model_validator(mode="after")
+	def _min_before_max(self):
+		# 계약의 "WGS84 사각형"을 형태로 강제 (Codex 리뷰) — 위반은 FastAPI 경계에서 422로 끝난다
+		if not (self.min_lat < self.max_lat and self.min_lng < self.max_lng):
+			raise ValueError("viewport min은 max보다 작아야 한다")
+		return self
 
 
 class ParseRequest(BaseModel):
@@ -229,6 +237,8 @@ def call_model(system, user, timeout, response_format):
 		headers={"Authorization": "Bearer %s" % ROUTE_AI_API_KEY},
 		json={
 			"model": ROUTE_AI_MODEL,
+			# 반복 요청 흔들림 축소(FR-ROUTE-10)이지 비트 단위 보장은 아니다 — 완전 재현은 BE 캐시 몫(비목표)
+			"temperature": 0,
 			"messages": [
 				{"role": "system", "content": system},
 				{"role": "user", "content": user},
@@ -394,6 +404,9 @@ def smoke():
 		lambda: ParseRequest.model_validate({"text": "부산", "viewport": viewport.model_dump(), "user_id": 1}),
 		lambda: ExplainRequest(points=[]),
 		lambda: ExplainRequest(points=list(explain_req.points) * 11),  # 22개 > 방어값 20
+		# viewport 좌표 정합 (Codex 리뷰) — 범위 밖·min>max 역전은 모델까지 가기 전에 422 경로로 끝나야 한다
+		lambda: ParseRequest(text="부산", viewport={"min_lat": 91, "min_lng": 128.95, "max_lat": 95, "max_lng": 129.2}),
+		lambda: ParseRequest(text="부산", viewport={"min_lat": 35.25, "min_lng": 128.95, "max_lat": 35.05, "max_lng": 129.2}),
 	]
 	for bad_request in bad_requests:
 		try:
