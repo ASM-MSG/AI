@@ -8,14 +8,19 @@
 
     ROUTE_AI_API_KEY=sk-... python route_experiment.py                 # 전체 (실모델 과금 호출)
     ROUTE_AI_API_KEY=sk-... python route_experiment.py --only injection
+    ROUTE_AI_API_KEY=sk-... python route_experiment.py --server http://localhost:8000   # 직호출+HTTP 왕복 병기
 
 유의:
 - **실행에 ROUTE_AI_API_KEY가 필요하다.** ROUTE_AI_ENABLED는 불필요 — route_ai 파이프라인 직호출이라
   서버 플래그와 무관하고, server.py --smoke(플래그 off 전제)와도 독립이다.
 - **성능 수치는 EC2에서만 유효하다** — macOS 수치를 리포트에 쓰지 않는다 (CLAUDE.md "알아둘 함정").
-  왕복은 파이프라인(프롬프트 조립→모델 호출→검증) 기준이다 — 서버 핸들러는 얇아서(D-1) 모델 호출이
-  지배항이다. 블러 잡 PROCESSING 중 경합 케이스는 EC2에서 잡을 돌려 두고 이 스크립트를 병행 실행해
-  잰다 (MSG-353 선례).
+  timing 기본은 파이프라인 직호출(프롬프트 조립→모델 호출→검증)이고, --server를 주면 기동 중인
+  서버로의 HTTP 왕복(FastAPI 디스패치·스레드풀·직렬화·전송 포함)도 같은 횟수로 재서 두 중앙값을
+  병기한다 — 리포트의 "직호출·HTTP 병기"는 이 두 수치다. --server 측정은 ROUTE_AI_ENABLED=1로
+  기동한 서버가 필요하다(꺼져 있으면 회차가 http_503으로 남는다). 블러 잡 PROCESSING 중 경합
+  케이스는 EC2에서 잡을 돌려 두고 이 스크립트를 병행 실행해 잰다 (MSG-353 선례).
+- timing 중앙값은 회차 전부 성공일 때만 기록한다 — 일부 실패 표본의 중앙값은 성공 1회를 그럴듯한
+  지연값으로 둔갑시킨다 (Codex 5R). 실패가 섞이면 회차별 outcome만 남는다(실패율도 리포트 재료다).
 - --smoke 없음: 전 섹션이 실모델 호출이라 스텁 검증은 route_ai.py --smoke와 중복이다.
 
 출력:
@@ -58,6 +63,7 @@ EXPLAIN_POINTS = [
 
 VIEWPORT = {"min_lat": 35.05, "min_lng": 128.95, "max_lat": 35.25, "max_lng": 129.20}  # 부산 일대 (스펙 예시)
 TIMING_RUNS = 3  # 왕복 시간 중앙값 산출 횟수 — MSG-353 리포트 방법 준용
+SERVER_URL = None  # --server로 주입 — 주어지면 timing이 HTTP 왕복도 병기한다 (기본: 직호출만)
 
 
 def timed(fn):
@@ -120,21 +126,40 @@ def run_explain():
 	return [explain_once(EXPLAIN_POINTS)]
 
 
-def run_timing():
-	"""질문 4 — parse·explain 각 3회 중앙값. 실패 회차는 중앙값 산출에서 뺀다(수치 오염 방지)."""
-	parse_runs = [parse_once(NORMAL_TEXTS[0]) for _ in range(TIMING_RUNS)]
-	explain_runs = [explain_once(EXPLAIN_POINTS) for _ in range(TIMING_RUNS)]
+def http_once(path, body):
+	"""기동 중인 서버로 HTTP 왕복 1회 — FastAPI 디스패치·스레드풀·직렬화·전송이 포함된 수치다."""
+	started = time.monotonic()
+	try:
+		r = httpx.post(SERVER_URL + path, json=body, timeout=route_ai.ROUTE_AI_TIMEOUT_SEC + 10)
+		outcome = "ok" if r.status_code == 200 else "http_%d" % r.status_code
+	except httpx.HTTPError as e:
+		outcome = e.__class__.__name__
+	return {"outcome": outcome, "ms": int((time.monotonic() - started) * 1000)}
 
-	def median_ok(runs):
-		oks = [r["ms"] for r in runs if r["outcome"] == "ok"]
-		return statistics.median(oks) if oks else None
+
+def timing_block(parse_runs, explain_runs):
+	def median_all_ok(runs):
+		# 일부 실패 표본의 중앙값은 발표하지 않는다 (Codex 5R) — 전 회차 성공일 때만 기록, 아니면 None
+		return statistics.median([r["ms"] for r in runs]) if all(r["outcome"] == "ok" for r in runs) else None
 
 	return {
-		"runs": TIMING_RUNS,
-		"parse_ms": [r["ms"] for r in parse_runs], "parse_median_ms": median_ok(parse_runs),
-		"explain_ms": [r["ms"] for r in explain_runs], "explain_median_ms": median_ok(explain_runs),
+		"parse_ms": [r["ms"] for r in parse_runs], "parse_median_ms": median_all_ok(parse_runs),
+		"explain_ms": [r["ms"] for r in explain_runs], "explain_median_ms": median_all_ok(explain_runs),
 		"outcomes": {"parse": [r["outcome"] for r in parse_runs], "explain": [r["outcome"] for r in explain_runs]},
 	}
+
+
+def run_timing():
+	"""질문 4 — parse·explain 각 3회. --server가 있으면 HTTP 왕복 3회도 재서 직호출과 병기한다."""
+	blocks = {"pipeline": timing_block(
+		[parse_once(NORMAL_TEXTS[0]) for _ in range(TIMING_RUNS)],
+		[explain_once(EXPLAIN_POINTS) for _ in range(TIMING_RUNS)])}
+	if SERVER_URL:
+		blocks["http"] = timing_block(
+			[http_once("/route/parse", {"text": NORMAL_TEXTS[0], "viewport": VIEWPORT})
+				for _ in range(TIMING_RUNS)],
+			[http_once("/route/explain", {"points": EXPLAIN_POINTS}) for _ in range(TIMING_RUNS)])
+	return {"runs": TIMING_RUNS, **blocks}
 
 
 # 실행 순서 고정 — 스키마 수락이 깨져 있으면 나머지 전부 model_error라 먼저 확인한다 (fail fast)
@@ -152,23 +177,28 @@ def print_report(report):
 		print("         → %s" % json.dumps(row["result"], ensure_ascii=False))
 	for row in report.get("explain", []):
 		print("[explain] outcome=%s reasons=%s" % (row["outcome"], row["reasons"]))
-	if "timing" in report:
-		t = report["timing"]
-		print("[timing] parse %s → 중앙값 %sms / explain %s → 중앙값 %sms"
-			% (t["parse_ms"], t["parse_median_ms"], t["explain_ms"], t["explain_median_ms"]))
+	for mode, t in report.get("timing", {}).items():
+		if mode == "runs":
+			continue
+		fmt = lambda ms: "—" if ms is None else "%sms" % ms  # None = 실패 회차 존재 (JSON엔 null로 남는다)
+		print("[timing:%s] parse %s → 중앙값 %s / explain %s → 중앙값 %s"
+			% (mode, t["parse_ms"], fmt(t["parse_median_ms"]), t["explain_ms"], fmt(t["explain_median_ms"])))
 
 
 def main():
 	ap = argparse.ArgumentParser(description="MSG-458 실모델 검증 — 실행 조건·유의는 파일 상단 docstring 참조")
 	ap.add_argument("--only", choices=sorted(SECTIONS), help="한 섹션만 실행 (기본: 전체)")
 	ap.add_argument("--out", default="results/MSG-458-routes.json")
+	ap.add_argument("--server", help="기동 중인 서버 URL — 주어지면 timing이 HTTP 왕복도 병기 (예: http://localhost:8000)")
 	args = ap.parse_args()
+	globals()["SERVER_URL"] = args.server
 
 	if not route_ai.ROUTE_AI_API_KEY:
 		ap.error("ROUTE_AI_API_KEY가 없다 — 실모델 호출 실험이라 키 없이는 돌릴 수 없다")
 
 	names = [args.only] if args.only else list(SECTIONS)
-	report = {"model": route_ai.ROUTE_AI_MODEL, "timeout_sec": route_ai.ROUTE_AI_TIMEOUT_SEC}
+	report = {"model": route_ai.ROUTE_AI_MODEL, "timeout_sec": route_ai.ROUTE_AI_TIMEOUT_SEC,
+		"server": SERVER_URL}
 	for name in names:
 		print("== %s ==" % name, flush=True)
 		report[name] = SECTIONS[name]()
