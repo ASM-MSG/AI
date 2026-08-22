@@ -14,6 +14,7 @@
 
 import argparse
 import json
+import math
 import os
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -199,6 +200,9 @@ def validate_env():
 	"""기동 시 노브 정합 검증 — 다음 모듈에서 server.py가 부른다 (AI_WORKERS 검증 선례, D-2)."""
 	if ROUTE_AI_ENABLED and not ROUTE_AI_API_KEY:
 		raise ValueError("ROUTE_AI_ENABLED=1인데 ROUTE_AI_API_KEY가 없다")
+	# 0·음수는 요청 즉시 실패, nan·inf는 안전핀 소멸인데 float() 파싱은 전부 통과시킨다 (Codex 2R)
+	if not math.isfinite(ROUTE_AI_TIMEOUT_SEC) or ROUTE_AI_TIMEOUT_SEC <= 0:
+		raise ValueError("ROUTE_AI_TIMEOUT_SEC은 0보다 큰 유한값이어야 한다: %s" % ROUTE_AI_TIMEOUT_SEC)
 
 
 def is_enabled():
@@ -423,7 +427,7 @@ def smoke():
 
 	# 노브 정합 — 켜짐인데 키 없으면 기동 시 ValueError (D-2, AI_WORKERS 선례).
 	# 플래그는 요청 시점 조회라 전역 재대입이 즉시 반영돼야 한다 — server.py --smoke의 on/off 왕복 전제
-	saved = (ROUTE_AI_ENABLED, ROUTE_AI_API_KEY)
+	saved = (ROUTE_AI_ENABLED, ROUTE_AI_API_KEY, ROUTE_AI_TIMEOUT_SEC)
 	globals()["ROUTE_AI_ENABLED"], globals()["ROUTE_AI_API_KEY"] = True, ""
 	try:
 		assert is_enabled(), "전역 재대입이 is_enabled()에 반영되지 않는다"
@@ -434,8 +438,15 @@ def smoke():
 			pass
 		globals()["ROUTE_AI_ENABLED"] = False
 		assert not is_enabled(), "플래그 off 재대입이 is_enabled()에 반영되지 않는다"
+		globals()["ROUTE_AI_TIMEOUT_SEC"] = float("inf")  # 안전핀 소멸 값 — 기동에서 걸러야 한다 (Codex 2R)
+		try:
+			validate_env()
+			raise AssertionError("ROUTE_AI_TIMEOUT_SEC=inf인데 ValueError가 안 났다")
+		except ValueError:
+			pass
 	finally:
-		globals()["ROUTE_AI_ENABLED"], globals()["ROUTE_AI_API_KEY"] = saved
+		(globals()["ROUTE_AI_ENABLED"], globals()["ROUTE_AI_API_KEY"],
+			globals()["ROUTE_AI_TIMEOUT_SEC"]) = saved
 
 	print("smoke OK")
 
