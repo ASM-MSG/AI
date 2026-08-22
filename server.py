@@ -389,7 +389,9 @@ def smoke():
 				"interests": ["맛집", "축제"], "preferred_order": ["부산역", "해운대 식사", "축제"]}, \
 				f"parse 200 형태 위반: {r.json()}"
 
-			route_stub('{"reasons": ["8월 말까지 열리는 빛축제입니다.", "식사 후 걷기 좋은 바다 지점입니다."]}')
+			# 모델 내부 스키마는 index 에코 (Codex 4R) — BE로 나가는 응답 형태는 아래 어서션 그대로 불변이다
+			route_stub('{"reasons": [{"index": 0, "reason": "8월 말까지 열리는 빛축제입니다."},'
+				' {"index": 1, "reason": "식사 후 걷기 좋은 바다 지점입니다."}]}')
 			r = client.post("/route/explain", json=explain_body)
 			assert r.status_code == 200, f"explain 왕복 실패: {r.status_code} {r.text}"
 			reasons = r.json()["reasons"]

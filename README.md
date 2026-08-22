@@ -98,7 +98,8 @@ scp scripts/ec2-deploy.sh <user>@<host>:~/ && ssh <user>@<host> 'bash ec2-deploy
 경로 추천 언어 처리(MSG-458)는 블러 잡과 독립인 **동기** 경로다 — 워커 큐를 거치지 않고
 잡 상태도 만들지 않는다. `/route/parse`는 `{text(1~500자), viewport(WGS84 사각형)}`를 받아
 `{region, period{start, end}, interests[], preferred_order[]}`로 해석하고(전 필드 빈 결과도
-유효 — 못 읽었다는 뜻), `/route/explain`은 `{points[{name, kind, facts[]}]}`(1~20개)를 받아
+유효 — 못 읽었다는 뜻), `/route/explain`은 `{points[{name, kind, facts[]}]}`(지점 1~20개,
+`facts`는 지점당 1~5개)를 받아
 지점과 같은 개수·순서의 `{reasons[]}`(각 개행 없는 1~120자)를 돌려준다. 장소 선정은 BE 몫이고
 이 서버는 문장↔구조 번역만 한다. 모델(OpenAI `ROUTE_AI_MODEL`, 기본 `gpt-4o-mini`) 출력이
 계약 형태를 벗어나면(비 JSON·미정의 필드·타입·길이·개수 위반) 200으로 흘리지 않고 `502`로
