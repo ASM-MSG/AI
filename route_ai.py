@@ -142,6 +142,14 @@ class Period(BaseModel):
 	start: date  # KST 날짜 라벨 — BE 시각 컨벤션(KST 라벨은 날짜)과 정합 (계약 변경 절)
 	end: date
 
+	@model_validator(mode="after")
+	def _start_before_end(self):
+		# 역전 기간이 200으로 새면 BE가 잘못된 구간으로 후보를 거른다 (Codex 3R) — 모델 출력 경로라 502가 맞다.
+		# 등호 허용 — 하루짜리 기간(start == end)은 유효하다
+		if self.start > self.end:
+			raise ValueError("period start가 end보다 뒤다")
+		return self
+
 
 class ParseResult(BaseModel):
 	"""모델 출력 계약 (parse). strict + extra="forbid" — 미정의 필드 하나라도 있으면 통째 거부 (D-3).
@@ -369,6 +377,12 @@ def smoke():
 	injected = good_parse[:-1] + ', "places": ["가짜 축제"]}'
 	_, outcome = run_with_stub(injected, lambda: parse_route(parse_req))
 	assert outcome == "shape_reject", "미정의 필드(places)가 통과됨: %s" % outcome
+
+	# 3-1. 유효한 ISO 날짜 두 개가 역순 → 거부 (Codex 3R — 형태만으로는 통과해 버리는 값 규칙)
+	reversed_period = ('{"region": null, "period": {"start": "2026-08-23", "end": "2026-08-22"},'
+		' "interests": [], "preferred_order": []}')
+	_, outcome = run_with_stub(reversed_period, lambda: parse_route(parse_req))
+	assert outcome == "shape_reject", "역전 기간(start > end)이 통과됨: %s" % outcome
 
 	# 4. interests 51자 항목 / 11개 초과 → 거부
 	long_item = '{"region": null, "period": null, "interests": ["%s"], "preferred_order": []}' % ("가" * 51)
