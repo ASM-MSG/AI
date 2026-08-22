@@ -72,6 +72,8 @@ scp scripts/ec2-deploy.sh <user>@<host>:~/ && ssh <user>@<host> 'bash ec2-deploy
 | `GET` | `/jobs/{id}/video` | 블러 처리본 mp4 (h264, 원본 오디오 유지). 완료 전 409 · **프리체크 탈락 409** |
 | `POST` | `/highlights` | multipart `file`. **블러 없이 하이라이트만 동기 계산** → `200 {"highlights": [[시작초, 끝초], …]}`. 열 수 없는 입력은 `422` (MSG-353, 업로드 확정 전 선분석용) |
 | `GET` | `/health` | 컨테이너 헬스체크 |
+| `POST` | `/route/parse` | JSON `{text, viewport}`. 자연어를 `{region, period, interests, preferred_order}`로 동기 해석. 형태 위반 출력은 서버가 걸러 `502` (MSG-458) |
+| `POST` | `/route/explain` | JSON `{points}`. 지점별 추천 이유 한 줄을 같은 개수·순서로 동기 반환. 플래그 off는 두 경로 다 `503` (MSG-458) |
 
 `status` 전이: `QUEUED → PROCESSING → DONE | FAILED`. BE 매핑 예:
 `PROCESSING`이면 `processing_status = BLURRING`. `highlights`는 완료 시
@@ -92,6 +94,19 @@ scp scripts/ec2-deploy.sh <user>@<host>:~/ && ssh <user>@<host> 'bash ec2-deploy
 → 얼굴·번호판 블러 → 하이라이트. 재생본은 블러 프레임을 rawvideo 파이프로 ffmpeg에 흘려
 **단일 인코딩 패스**(h264 + 원본 오디오)로 굽는다 — 별도 병합 패스와 mp4v 중간 파일이
 없다(MSG-367, 세대 손실 제거). 현재 잡은 큐에서 순차 처리한다(`AI_WORKERS=1`).
+
+경로 추천 언어 처리(MSG-458)는 블러 잡과 독립인 **동기** 경로다 — 워커 큐를 거치지 않고
+잡 상태도 만들지 않는다. `/route/parse`는 `{text(1~500자), viewport(WGS84 사각형)}`를 받아
+`{region, period{start, end}, interests[], preferred_order[]}`로 해석하고(전 필드 빈 결과도
+유효 — 못 읽었다는 뜻), `/route/explain`은 `{points[{name, kind, facts[]}]}`(지점 1~20개,
+`facts`는 지점당 1~5개)를 받아
+지점과 같은 개수·순서의 `{reasons[]}`(각 개행 없는 1~120자)를 돌려준다. 장소 선정은 BE 몫이고
+이 서버는 문장↔구조 번역만 한다. 모델(OpenAI `ROUTE_AI_MODEL`, 기본 `gpt-4o-mini`) 출력이
+계약 형태를 벗어나면(비 JSON·미정의 필드·타입·길이·개수 위반) 200으로 흘리지 않고 `502`로
+끝낸다. 실패는 네 가지뿐이다 — 요청 오류 `422` · 모델 실패/형태 위반 `502` ·
+`ROUTE_AI_ENABLED` 꺼짐(기본) `503` · 모델 타임아웃(`ROUTE_AI_TIMEOUT_SEC`, 기본 30초) `504`.
+BE는 502·503·504를 전부 "해석 실패"로 받는다. 두 계약 어디에도 사용자 식별 정보 필드는 없다.
+켜려면 `ROUTE_AI_ENABLED=1`과 `ROUTE_AI_API_KEY`가 둘 다 필요하다(키 없이 켜면 기동 실패).
 
 ## 벤치마크 (MSG-142)
 

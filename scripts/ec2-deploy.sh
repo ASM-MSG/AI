@@ -25,6 +25,13 @@ AI_WORKERS="${AI_WORKERS:-1}"
 AI_BATCH_SIZE="${AI_BATCH_SIZE:-1}"
 case "$AI_WORKERS" in 1|2) ;; *) echo "AI_WORKERS는 1 또는 2만 허용" >&2; exit 1 ;; esac
 case "$AI_BATCH_SIZE" in 1|2|4) ;; *) echo "AI_BATCH_SIZE는 1, 2, 4만 허용" >&2; exit 1 ;; esac
+# MSG-458 경로 추천 노브 4종 — 미설정이면 빈 값으로 전달되고 route_ai.py가 빈 값을 미설정으로
+# 취급한다(기본값 정본은 route_ai.py 상단, 여기 중복 금지). 켜짐+키 없음은 컨테이너가 기동
+# ValueError로 죽고 아래 /health 대기가 잡아낸다 — 의도된 fail fast.
+ROUTE_AI_ENABLED="${ROUTE_AI_ENABLED:-}"
+ROUTE_AI_API_KEY="${ROUTE_AI_API_KEY:-}"
+ROUTE_AI_MODEL="${ROUTE_AI_MODEL:-}"
+ROUTE_AI_TIMEOUT_SEC="${ROUTE_AI_TIMEOUT_SEC:-}"
 
 log() { echo -e "\n\033[1;36m=== $* ===\033[0m"; }
 
@@ -54,8 +61,11 @@ log "4/5 컨테이너 교체"
 sudo docker rm -f fillmap-ai 2>/dev/null || true
 sudo docker run -d --name fillmap-ai --restart unless-stopped \
 	-p "$PORT:8000" -v hf-cache:/root/.cache/huggingface \
-	-e AI_WORKERS="$AI_WORKERS" -e AI_BATCH_SIZE="$AI_BATCH_SIZE" fillmap-ai
-echo "  AI_WORKERS=$AI_WORKERS / AI_BATCH_SIZE=$AI_BATCH_SIZE"
+	-e AI_WORKERS="$AI_WORKERS" -e AI_BATCH_SIZE="$AI_BATCH_SIZE" \
+	-e ROUTE_AI_ENABLED="$ROUTE_AI_ENABLED" -e ROUTE_AI_API_KEY="$ROUTE_AI_API_KEY" \
+	-e ROUTE_AI_MODEL="$ROUTE_AI_MODEL" -e ROUTE_AI_TIMEOUT_SEC="$ROUTE_AI_TIMEOUT_SEC" fillmap-ai
+# 키 값은 절대 echo하지 않는다 — 켜짐 여부만 남긴다 (NFR-SEC-09 계열)
+echo "  AI_WORKERS=$AI_WORKERS / AI_BATCH_SIZE=$AI_BATCH_SIZE / ROUTE_AI_ENABLED=${ROUTE_AI_ENABLED:-off}"
 
 echo -n "  /health 대기"
 for _ in $(seq 1 30); do
