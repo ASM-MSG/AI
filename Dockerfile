@@ -14,7 +14,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu \
 	&& pip install --no-cache-dir -r requirements.txt
 
-COPY bench.py server.py ./
+# route_ai.py는 server.py가 import한다 — 빠지면 컨테이너가 기동 실패 (MSG-458 Codex 리뷰).
+# route_experiment.py는 EC2 실측을 docker exec로 돌리기 위해 같이 넣는다.
+COPY bench.py server.py route_ai.py route_experiment.py ./
 
 EXPOSE 8000
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
