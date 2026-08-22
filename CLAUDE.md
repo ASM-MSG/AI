@@ -149,8 +149,16 @@ release/{버전}
   cv2.VideoWriter를 ffmpeg rawvideo 파이프로 교체해 mp4v 경유·병합 패스 제거. 재생본이
   4세대→3세대 인코딩본. 실영상 3종 전후 대조 detections·프레임 수 동일 —
   `results/MSG-367-identity.json`. EC2 전후 실측: 유휴 왕복 중앙값 221→192초(-13.1%),
-  결과물 -21.9%, 메모리 동등 — 근거는 `results/MSG-367-report.md`)
+  결과물 -21.9%, 메모리 동등 — 근거는 `results/MSG-367-report.md`) ·
+  MSG-458(AI 경로 추천의 언어 양끝 — 동기 `POST /route/parse`(자연어+뷰포트 → 지역·기간·
+  관심사·선호 순서)와 `POST /route/explain`(지점별 이유 한 줄), 잡 큐 우회. OpenAI
+  `gpt-4o-mini` httpx 직호출(SDK 없음), pydantic strict 형태 방어, 인젝션 방어 3층.
+  후보 선정·순서 배열은 BE(MSG-457) 몫. `ROUTE_AI_ENABLED` 기본 꺼짐, 스펙 `docs/MSG-458.md`.
+  **EC2 실측 4종 잔여** — 아래 "남은 것")
 - 남은 것: 감지 건수(얼굴 N·번호판 N) 응답 추가(MSG-140 잔여 완료 조건) ·
   AI 처리량 확장은 실제 수요가 시간당 20건 이상으로 유지되면 인스턴스 유형부터 재평가 ·
   **MSG-284 탈락률 관측** — 운영 후 무의미 영상이 업로드의 2% 미만이면 프리체크가 손해다
-  (판정 비용 > 절감. 손익분기 계산은 `results/MSG-284-report.md`). FR-7 판정 로그가 데이터 장치다
+  (판정 비용 > 절감. 손익분기 계산은 `results/MSG-284-report.md`). FR-7 판정 로그가 데이터 장치다 ·
+  **MSG-458 EC2 실측** — 스키마 실수락·실모델 인젝션 내성·왕복 시간(직호출+HTTP 병기)·블러
+  잡 경합 4종을 `route_experiment.py`(ROUTE_AI_API_KEY 필요)로 재서 `results/MSG-458-report.md`에
+  남긴다. 응답 시간 상한은 이 실측 후 BE가 확정한다(스펙 미해결 질문)
