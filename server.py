@@ -362,12 +362,8 @@ def smoke():
 			{"name": "해운대 빛축제", "kind": "mission_festival", "facts": ["2026-08-01~08-31 진행 중"]},
 			{"name": "광안리 해변", "kind": "place", "facts": ["이전 지점에서 1.2km"]},
 		]}
-		assert not route_ai.is_enabled(), "route 스모크는 플래그 기본(꺼짐) 상태를 전제한다"
-		for path, body in (("/route/parse", parse_body), ("/route/explain", explain_body)):
-			r = client.post(path, json=body)
-			assert r.status_code == 503, f"플래그 off인데 {path}가 503이 아니다: {r.status_code}"
-
-		# 플래그 on + call_model 스텁 왕복 — is_enabled() 요청 시점 조회(route_ai 전역 재대입)를 실제로 태운다
+		# 환경 플래그 상태를 전제하지 않는다 — EC2 실측은 ROUTE_AI_ENABLED=1로 돌린다 (Codex 2R).
+		# 원래 상태를 저장하고 off→on을 강제해 두 분기를 다 태운 뒤 finally로 복원한다
 		saved_enabled, real_call_model = route_ai.ROUTE_AI_ENABLED, route_ai.call_model
 
 		def route_stub(raw):
@@ -377,8 +373,14 @@ def smoke():
 				return raw
 			route_ai.call_model = _stub
 
-		route_ai.ROUTE_AI_ENABLED = True
 		try:
+			route_ai.ROUTE_AI_ENABLED = False  # off 강제 — 두 엔드포인트 다 명시적 503
+			for path, body in (("/route/parse", parse_body), ("/route/explain", explain_body)):
+				r = client.post(path, json=body)
+				assert r.status_code == 503, f"플래그 off인데 {path}가 503이 아니다: {r.status_code}"
+
+			# on 강제 + call_model 스텁 왕복 — is_enabled() 요청 시점 조회(route_ai 전역 재대입)를 실제로 태운다
+			route_ai.ROUTE_AI_ENABLED = True
 			route_stub('{"region": "해운대", "period": {"start": "2026-08-22", "end": "2026-08-23"},'
 				' "interests": ["맛집", "축제"], "preferred_order": ["부산역", "해운대 식사", "축제"]}')
 			r = client.post("/route/parse", json=parse_body)
@@ -407,7 +409,8 @@ def smoke():
 			assert r.status_code == 422, f"text 결손이 422가 아니다: {r.status_code}"
 		finally:
 			route_ai.ROUTE_AI_ENABLED, route_ai.call_model = saved_enabled, real_call_model
-		assert client.post("/route/parse", json=parse_body).status_code == 503, "플래그 복원 후에도 켜져 있다"
+		assert (route_ai.ROUTE_AI_ENABLED, route_ai.call_model) == (saved_enabled, real_call_model), \
+			"스모크가 route_ai 전역을 복원하지 않았다"
 		# D-1: 동기 경로는 잡 상태를 만들지도 바꾸지도 않는다
 		assert all(client.get(f"/jobs/{job_id}").json()["status"] == "DONE" for job_id in job_ids), \
 			"route 호출이 기존 잡 상태를 바꿨다"
