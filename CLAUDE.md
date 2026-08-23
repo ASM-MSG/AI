@@ -154,11 +154,9 @@ release/{버전}
   관심사·선호 순서)와 `POST /route/explain`(지점별 이유 한 줄), 잡 큐 우회. OpenAI
   `gpt-4o-mini` httpx 직호출(SDK 없음), pydantic strict 형태 방어, 인젝션 방어 3층.
   후보 선정·순서 배열은 BE(MSG-457) 몫. `ROUTE_AI_ENABLED` 기본 꺼짐, 스펙 `docs/MSG-458.md`.
-  **EC2 실측 4종 잔여** — 아래 "남은 것")
+  EC2 실측 완료 — 인젝션 6/6 방어, HTTP 왕복 중앙값 parse 0.9~1.2초·explain 1.1초, 블러 경합
+  영향 없음. 근거는 `results/MSG-458-report.md`)
 - 남은 것: 감지 건수(얼굴 N·번호판 N) 응답 추가(MSG-140 잔여 완료 조건) ·
   AI 처리량 확장은 실제 수요가 시간당 20건 이상으로 유지되면 인스턴스 유형부터 재평가 ·
   **MSG-284 탈락률 관측** — 운영 후 무의미 영상이 업로드의 2% 미만이면 프리체크가 손해다
-  (판정 비용 > 절감. 손익분기 계산은 `results/MSG-284-report.md`). FR-7 판정 로그가 데이터 장치다 ·
-  **MSG-458 EC2 실측** — 스키마 실수락·실모델 인젝션 내성·왕복 시간(직호출+HTTP 병기)·블러
-  잡 경합 4종을 `route_experiment.py`(ROUTE_AI_API_KEY 필요)로 재서 `results/MSG-458-report.md`에
-  남긴다. 응답 시간 상한은 이 실측 후 BE가 확정한다(스펙 미해결 질문)
+  (판정 비용 > 절감. 손익분기 계산은 `results/MSG-284-report.md`). FR-7 판정 로그가 데이터 장치다

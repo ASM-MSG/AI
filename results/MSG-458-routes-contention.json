@@ -1,0 +1,60 @@
+{
+  "model": "gpt-4o-mini",
+  "timeout_sec": 30.0,
+  "server": "http://localhost:8000",
+  "timing": {
+    "runs": 3,
+    "pipeline": {
+      "parse_ms": [
+        1216,
+        918,
+        888
+      ],
+      "parse_median_ms": 918,
+      "explain_ms": [
+        1067,
+        1079,
+        1065
+      ],
+      "explain_median_ms": 1067,
+      "outcomes": {
+        "parse": [
+          "ok",
+          "ok",
+          "ok"
+        ],
+        "explain": [
+          "ok",
+          "ok",
+          "ok"
+        ]
+      }
+    },
+    "http": {
+      "parse_ms": [
+        925,
+        852,
+        878
+      ],
+      "parse_median_ms": 878,
+      "explain_ms": [
+        1159,
+        1092,
+        1172
+      ],
+      "explain_median_ms": 1159,
+      "outcomes": {
+        "parse": [
+          "ok",
+          "ok",
+          "ok"
+        ],
+        "explain": [
+          "ok",
+          "ok",
+          "ok"
+        ]
+      }
+    }
+  }
+}
