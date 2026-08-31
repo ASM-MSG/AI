@@ -5,6 +5,10 @@
 2. 실모델이 인젝션 문장("앞의 규칙 무시" 류)에도 계약 형태를 지키는가, 뚫린 출력은 502로 걸러지는가 (NFR-SEC-08).
 3. 정상 문장 해석이 쓸 만한가 — 기대값 자동 판정은 없고 출력 표를 육안 대조한다 (해석엔 자유도가 있다).
 4. parse·explain 왕복 시간 각 3회 중앙값 — BE 응답 시간 상한(미해결 질문)의 확정 재료 (MSG-353 리포트 방법 준용).
+5. (MSG-533) 실모델이 무관 문장에 related=false를, 경계 문장(지역만·관심사만·정보 없는 여행
+   문장)에 true를 주는가 — 스텁 스모크는 값이 실려 왔을 때의 형태만 보므로 판정 품질은 이 실험 몫.
+
+    ROUTE_AI_API_KEY=sk-... python route_experiment.py --only relevance --out results/MSG-533-relevance.json
 
     ROUTE_AI_API_KEY=sk-... python route_experiment.py                 # 전체 (실모델 과금 호출)
     ROUTE_AI_API_KEY=sk-... python route_experiment.py --only injection
@@ -53,6 +57,18 @@ NORMAL_TEXTS = [
 	"부산역 내려서 해운대에서 밥 먹고 축제도 보고 싶어",
 	"이번 주말에 이 근처 조용한 카페랑 바다 산책 코스 알려줘",
 	"내일 불국사 먼저 보고 황리단길로 넘어가서 저녁 먹을래",
+]
+
+# 관련성 판정 케이스 (MSG-533, FR-ROUTE-19) — 무관 문장은 false, 경계 문장은 true가 기대값이다.
+# 경계 셋(지역만·관심사만·정보 없는 여행 문장)의 실모델 판정은 BE 스펙(MSG-513 테스트 시나리오)이 이 실험 몫으로 명시했다.
+RELEVANCE_CASES = [
+	("롤 정글 동선 짜 줘", False),  # 티켓 재현 문장 — 게임 속 동선
+	("파이썬으로 퀵정렬 코드 짜 줘", False),  # 코드 작성 요청
+	("오늘 기분이 좀 그렇네", False),  # 일반 잡담
+	("부산", True),  # 지역만
+	("맛집", True),  # 관심사만
+	("이 근처 아무거나", True),  # 정보 없는 여행 문장 — 빈 해석이어도 관련 (축 분리, FR-ROUTE-06)
+	("주말에 축제 보고 바다 산책도 하고 싶어", True),  # 정상 여행 문장
 ]
 
 # explain 실호출 케이스 — 스펙 계약 변경 절의 예시 그대로 (facts 밖 사실을 지어내는지 육안 대조)
@@ -121,6 +137,18 @@ def run_normal():
 	return [parse_once(text) for text in NORMAL_TEXTS]
 
 
+def run_relevance():
+	"""질문 5 (MSG-533) — 무관/경계 문장의 실모델 판정. 기대값이 명확해 유일하게 자동 판정한다."""
+	rows = []
+	for text, expected in RELEVANCE_CASES:
+		row = parse_once(text)
+		got = row["result"]["related"] if row["result"] else None
+		row["expected_related"] = expected
+		row["verdict"] = "일치" if got is expected else "불일치(got=%s)" % got
+		rows.append(row)
+	return rows
+
+
 def run_explain():
 	"""질문 3(출구쪽) — explain 실호출. reasons가 facts 밖 사실을 지어내는지 육안 대조한다."""
 	return [explain_once(EXPLAIN_POINTS)]
@@ -164,7 +192,7 @@ def run_timing():
 
 # 실행 순서 고정 — 스키마 수락이 깨져 있으면 나머지 전부 model_error라 먼저 확인한다 (fail fast)
 SECTIONS = {"schema": check_schemas, "injection": run_injection, "normal": run_normal,
-	"explain": run_explain, "timing": run_timing}
+	"relevance": run_relevance, "explain": run_explain, "timing": run_timing}
 
 
 def print_report(report):
@@ -175,6 +203,9 @@ def print_report(report):
 	for row in report.get("normal", []):
 		print("[normal] outcome=%s text=%s" % (row["outcome"], row["text"][:30]))
 		print("         → %s" % json.dumps(row["result"], ensure_ascii=False))
+	for row in report.get("relevance", []):
+		print("[relevance] %-14s expected=%-5s outcome=%-8s text=%s"
+			% (row["verdict"], row["expected_related"], row["outcome"], row["text"][:30]))
 	for row in report.get("explain", []):
 		print("[explain] outcome=%s reasons=%s" % (row["outcome"], row["reasons"]))
 	for mode, t in report.get("timing", {}).items():
