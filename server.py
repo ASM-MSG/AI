@@ -382,11 +382,13 @@ def smoke():
 			# on 강제 + call_model 스텁 왕복 — is_enabled() 요청 시점 조회(route_ai 전역 재대입)를 실제로 태운다
 			route_ai.ROUTE_AI_ENABLED = True
 			route_stub('{"region": "해운대", "period": {"start": "2026-08-22", "end": "2026-08-23"},'
-				' "interests": ["맛집", "축제"], "preferred_order": ["부산역", "해운대 식사", "축제"]}')
+				' "interests": ["맛집", "축제"], "preferred_order": ["부산역", "해운대 식사", "축제"],'
+				' "related": true}')
 			r = client.post("/route/parse", json=parse_body)
 			assert r.status_code == 200, f"parse 왕복 실패: {r.status_code} {r.text}"
 			assert r.json() == {"region": "해운대", "period": {"start": "2026-08-22", "end": "2026-08-23"},
-				"interests": ["맛집", "축제"], "preferred_order": ["부산역", "해운대 식사", "축제"]}, \
+				"interests": ["맛집", "축제"], "preferred_order": ["부산역", "해운대 식사", "축제"],
+				"related": True}, \
 				f"parse 200 형태 위반: {r.json()}"
 
 			# 모델 내부 스키마는 index 에코 (Codex 4R) — BE로 나가는 응답 형태는 아래 어서션 그대로 불변이다
