@@ -398,6 +398,20 @@ def smoke():
 			assert r.status_code == 200, f"explain 왕복 실패: {r.status_code} {r.text}"
 			reasons = r.json()["reasons"]
 			assert len(reasons) == 2 and reasons[0].startswith("8월"), f"explain 개수·순서 위반: {reasons}"
+			assert "summary" not in r.json(), f"text 없는 explain 응답에 summary가 실렸다 (MSG-540 계약: 부재): {r.json()}"
+
+			# MSG-540: text 동봉 왕복 — summary가 반드시 실리고, 구계약 출력(summary 없음)은 502다
+			explain_text_body = {**explain_body, "text": parse_body["text"]}
+			route_stub('{"reasons": [{"index": 0, "reason": "8월 말까지 열리는 빛축제입니다."},'
+				' {"index": 1, "reason": "식사 후 걷기 좋은 바다 지점입니다."}],'
+				' "summary": "축제와 식사를 말한 문장이라 해운대 축제와 바다 지점으로 묶었습니다."}')
+			r = client.post("/route/explain", json=explain_text_body)
+			assert r.status_code == 200, f"text 동봉 explain 왕복 실패: {r.status_code} {r.text}"
+			assert r.json()["summary"].startswith("축제와"), f"summary가 훼손됐다: {r.json()}"
+			route_stub('{"reasons": [{"index": 0, "reason": "8월 말까지 열리는 빛축제입니다."},'
+				' {"index": 1, "reason": "식사 후 걷기 좋은 바다 지점입니다."}]}')
+			r = client.post("/route/explain", json=explain_text_body)
+			assert r.status_code == 502, f"text 동봉인데 summary 부재가 502가 아니다: {r.status_code}"
 
 			route_stub('{"region": "해운대", "places": ["가짜 축제"]}')  # 미정의 필드 — 형태 위반 (FR-ROUTE-08)
 			r = client.post("/route/parse", json=parse_body)
