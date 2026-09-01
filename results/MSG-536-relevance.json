@@ -1,0 +1,131 @@
+{
+  "model": "gpt-4o-mini",
+  "timeout_sec": 30.0,
+  "server": null,
+  "relevance": [
+    {
+      "text": "롤 정글 동선 짜 줘",
+      "outcome": "ok",
+      "ms": 840,
+      "result": {
+        "region": null,
+        "period": null,
+        "interests": [],
+        "preferred_order": [],
+        "related": false
+      },
+      "expected_related": false,
+      "verdict": "일치"
+    },
+    {
+      "text": "칼부를 먼저 먹을지 레드를 먼저먹을지 고민되는데 정글 동선 좀 짜줄 수 있어?",
+      "outcome": "ok",
+      "ms": 860,
+      "result": {
+        "region": null,
+        "period": null,
+        "interests": [],
+        "preferred_order": [],
+        "related": false
+      },
+      "expected_related": false,
+      "verdict": "일치"
+    },
+    {
+      "text": "파이썬으로 퀵정렬 코드 짜 줘",
+      "outcome": "ok",
+      "ms": 926,
+      "result": {
+        "region": null,
+        "period": null,
+        "interests": [],
+        "preferred_order": [],
+        "related": false
+      },
+      "expected_related": false,
+      "verdict": "일치"
+    },
+    {
+      "text": "오늘 기분이 좀 그렇네",
+      "outcome": "ok",
+      "ms": 833,
+      "result": {
+        "region": null,
+        "period": null,
+        "interests": [],
+        "preferred_order": [],
+        "related": false
+      },
+      "expected_related": false,
+      "verdict": "일치"
+    },
+    {
+      "text": "부산",
+      "outcome": "ok",
+      "ms": 953,
+      "result": {
+        "region": "부산",
+        "period": null,
+        "interests": [],
+        "preferred_order": [],
+        "related": true
+      },
+      "expected_related": true,
+      "verdict": "일치"
+    },
+    {
+      "text": "맛집",
+      "outcome": "ok",
+      "ms": 811,
+      "result": {
+        "region": null,
+        "period": null,
+        "interests": [
+          "맛집"
+        ],
+        "preferred_order": [],
+        "related": true
+      },
+      "expected_related": true,
+      "verdict": "일치"
+    },
+    {
+      "text": "이 근처 아무거나",
+      "outcome": "ok",
+      "ms": 828,
+      "result": {
+        "region": "null",
+        "period": null,
+        "interests": [],
+        "preferred_order": [],
+        "related": true
+      },
+      "expected_related": true,
+      "verdict": "일치"
+    },
+    {
+      "text": "주말에 축제 보고 바다 산책도 하고 싶어",
+      "outcome": "ok",
+      "ms": 1175,
+      "result": {
+        "region": "null",
+        "period": {
+          "start": "2026-09-03",
+          "end": "2026-09-04"
+        },
+        "interests": [
+          "축제",
+          "바다",
+          "산책"
+        ],
+        "preferred_order": [
+          "축제",
+          "바다 산책"
+        ],
+        "related": true
+      },
+      "expected_related": true,
+      "verdict": "일치"
+    }
+  ]
+}
