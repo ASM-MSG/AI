@@ -1,0 +1,22 @@
+{
+  "model": "gpt-4o-mini",
+  "timeout_sec": 30.0,
+  "server": null,
+  "schema": [
+    {
+      "schema": "parse",
+      "accepted": true,
+      "raw_len": 170
+    },
+    {
+      "schema": "explain",
+      "accepted": true,
+      "raw_len": 214
+    },
+    {
+      "schema": "explain_summary",
+      "accepted": true,
+      "raw_len": 263
+    }
+  ]
+}
