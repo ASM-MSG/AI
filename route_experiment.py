@@ -80,6 +80,11 @@ EXPLAIN_POINTS = [
 ]
 
 VIEWPORT = {"min_lat": 35.05, "min_lng": 128.95, "max_lat": 35.25, "max_lng": 129.20}  # 부산 일대 (스펙 예시)
+# MSG-540: 종합 이유(summary) 실호출 재료 — parse 스펙 예시 문장 그대로
+EXPLAIN_TEXT = "부산역 내려서 해운대에서 밥 먹고 축제도 보고 싶어"
+# 빈 해석 문장(지역·관심사·기간 없음) — summary가 조건을 지어내지 않고 화면 범위 기준을 말하는지 실측
+# (MSG-539 스펙 미해결 3의 판정 재료. 지어내면 결정 1의 기각 대안(빈 해석 플래그 동봉)을 재론한다)
+EXPLAIN_TEXT_EMPTY = "이 근처 아무 데나 둘러보고 싶어"
 TIMING_RUNS = 3  # 왕복 시간 중앙값 산출 횟수 — MSG-353 리포트 방법 준용
 SERVER_URL = None  # --server로 주입 — 주어지면 timing이 HTTP 왕복도 병기한다 (기본: 직호출만)
 
@@ -102,17 +107,19 @@ def parse_once(text):
 		"result": result.model_dump(mode="json") if result else None}
 
 
-def explain_once(points):
-	request = route_ai.ExplainRequest(points=points)
+def explain_once(points, text=None):
+	request = route_ai.ExplainRequest(points=points, text=text)
 	outcome, ms, result = timed(lambda: route_ai.explain_route(request))
-	return {"outcome": outcome, "ms": ms, "reasons": result.reasons if result else None}
+	return {"text": text, "outcome": outcome, "ms": ms, "reasons": result.reasons if result else None,
+		"summary": getattr(result, "summary", None)}
 
 
 def check_schemas():
 	"""질문 1 — OpenAI가 json_schema를 수락하는지. 거부면 모델 응답 전에 400과 스키마 오류 본문이 온다."""
 	rows = []
 	for name, response_format in (
-			("parse", route_ai.RESPONSE_FORMAT_PARSE), ("explain", route_ai.RESPONSE_FORMAT_EXPLAIN)):
+			("parse", route_ai.RESPONSE_FORMAT_PARSE), ("explain", route_ai.RESPONSE_FORMAT_EXPLAIN),
+			("explain_summary", route_ai.RESPONSE_FORMAT_EXPLAIN_SUMMARY)):
 		try:
 			raw = route_ai.call_model(
 				"형태 확인용이다. 스키마에 맞는 최소한의 JSON 하나만 반환하라.", "확인",
@@ -160,8 +167,14 @@ def run_relevance():
 
 
 def run_explain():
-	"""질문 3(출구쪽) — explain 실호출. reasons가 facts 밖 사실을 지어내는지 육안 대조한다."""
-	return [explain_once(EXPLAIN_POINTS)]
+	"""질문 3(출구쪽) — explain 실호출. reasons·summary가 facts·문장 밖 사실을 지어내는지 육안 대조한다.
+
+	MSG-540: text 동봉 케이스를 더해 구계약(부재)과 신계약(summary 필수)을 나란히 실측한다.
+	티켓 실측은 기본 --out(MSG-458 원자료)을 덮지 말고 티켓별 파일로 남긴다 —
+	`--only explain --out results/MSG-540-explain.json` (MSG-533-relevance.json 선례).
+	"""
+	return [explain_once(EXPLAIN_POINTS), explain_once(EXPLAIN_POINTS, EXPLAIN_TEXT),
+		explain_once(EXPLAIN_POINTS, EXPLAIN_TEXT_EMPTY)]
 
 
 def http_once(path, body):
