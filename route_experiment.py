@@ -64,6 +64,7 @@ NORMAL_TEXTS = [
 RELEVANCE_CASES = [
 	("롤 정글 동선 짜 줘", False),  # 티켓 재현 문장 — 게임 속 동선
 	("칼부를 먼저 먹을지 레드를 먼저먹을지 고민되는데 정글 동선 좀 짜줄 수 있어?", False),  # MSG-536 — dev 실사용에서 재요청 1회가 true 로 뚫린 경계 문장 ("먹을지"가 맛집 신호로 오독)
+	("부산에 왔는데 레드를 먼저 먹을지 칼부 먼저 먹을지 모르겠어 정글 동선 추천좀 부탁해", False),  # MSG-536 재오픈 — 실제 지역 방문 서사가 은어를 현지 먹거리로 보이게 해 5/5 일관 true 였던 문장. 요청 본체(정글 동선)가 게임이면 false
 	("파이썬으로 퀵정렬 코드 짜 줘", False),  # 코드 작성 요청
 	("오늘 기분이 좀 그렇네", False),  # 일반 잡담
 	("부산", True),  # 지역만
@@ -138,15 +139,23 @@ def run_normal():
 	return [parse_once(text) for text in NORMAL_TEXTS]
 
 
+RELEVANCE_TRIALS = 3  # 확률 판정이라 1회 통과는 증거가 아니다 — 회차 전부를 원자료로 남긴다 (MSG-536 재오픈)
+
+
 def run_relevance():
-	"""질문 5 (MSG-533) — 무관/경계 문장의 실모델 판정. 기대값이 명확해 유일하게 자동 판정한다."""
+	"""질문 5 (MSG-533) — 무관/경계 문장의 실모델 판정. 기대값이 명확해 유일하게 자동 판정한다.
+
+	케이스당 RELEVANCE_TRIALS회 반복하고 전 회차가 기대값과 같아야 일치다 — 경계 문장은 한 번의
+	우연한 통과가 "고쳐졌다"로 둔갑한다 (MSG-536이 5회 일관 true 였던 실측 사례).
+	"""
 	rows = []
 	for text, expected in RELEVANCE_CASES:
-		row = parse_once(text)
-		got = row["result"]["related"] if row["result"] else None
-		row["expected_related"] = expected
-		row["verdict"] = "일치" if got is expected else "불일치(got=%s)" % got
-		rows.append(row)
+		trials = [parse_once(text) for _ in range(RELEVANCE_TRIALS)]
+		gots = [t["result"]["related"] if t["result"] else None for t in trials]
+		rows.append({"text": text, "expected_related": expected,
+			"outcomes": [t["outcome"] for t in trials], "related_trials": gots,
+			"ms": [t["ms"] for t in trials],
+			"verdict": "일치" if all(g is expected for g in gots) else "불일치(%s)" % gots})
 	return rows
 
 
@@ -205,8 +214,8 @@ def print_report(report):
 		print("[normal] outcome=%s text=%s" % (row["outcome"], row["text"][:30]))
 		print("         → %s" % json.dumps(row["result"], ensure_ascii=False))
 	for row in report.get("relevance", []):
-		print("[relevance] %-14s expected=%-5s outcome=%-8s text=%s"
-			% (row["verdict"], row["expected_related"], row["outcome"], row["text"][:30]))
+		print("[relevance] %-14s expected=%-5s trials=%s text=%s"
+			% (row["verdict"], row["expected_related"], row["related_trials"], row["text"][:30]))
 	for row in report.get("explain", []):
 		print("[explain] outcome=%s reasons=%s" % (row["outcome"], row["reasons"]))
 	for mode, t in report.get("timing", {}).items():

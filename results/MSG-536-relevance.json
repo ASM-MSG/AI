@@ -5,126 +5,182 @@
   "relevance": [
     {
       "text": "롤 정글 동선 짜 줘",
-      "outcome": "ok",
-      "ms": 840,
-      "result": {
-        "region": null,
-        "period": null,
-        "interests": [],
-        "preferred_order": [],
-        "related": false
-      },
       "expected_related": false,
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "related_trials": [
+        false,
+        false,
+        false
+      ],
+      "ms": [
+        1618,
+        1148,
+        1045
+      ],
       "verdict": "일치"
     },
     {
       "text": "칼부를 먼저 먹을지 레드를 먼저먹을지 고민되는데 정글 동선 좀 짜줄 수 있어?",
-      "outcome": "ok",
-      "ms": 860,
-      "result": {
-        "region": null,
-        "period": null,
-        "interests": [],
-        "preferred_order": [],
-        "related": false
-      },
       "expected_related": false,
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "related_trials": [
+        false,
+        false,
+        false
+      ],
+      "ms": [
+        1053,
+        886,
+        844
+      ],
+      "verdict": "일치"
+    },
+    {
+      "text": "부산에 왔는데 레드를 먼저 먹을지 칼부 먼저 먹을지 모르겠어 정글 동선 추천좀 부탁해",
+      "expected_related": false,
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "related_trials": [
+        false,
+        false,
+        false
+      ],
+      "ms": [
+        1232,
+        1786,
+        1513
+      ],
       "verdict": "일치"
     },
     {
       "text": "파이썬으로 퀵정렬 코드 짜 줘",
-      "outcome": "ok",
-      "ms": 926,
-      "result": {
-        "region": null,
-        "period": null,
-        "interests": [],
-        "preferred_order": [],
-        "related": false
-      },
       "expected_related": false,
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "related_trials": [
+        false,
+        false,
+        false
+      ],
+      "ms": [
+        978,
+        1304,
+        977
+      ],
       "verdict": "일치"
     },
     {
       "text": "오늘 기분이 좀 그렇네",
-      "outcome": "ok",
-      "ms": 833,
-      "result": {
-        "region": null,
-        "period": null,
-        "interests": [],
-        "preferred_order": [],
-        "related": false
-      },
       "expected_related": false,
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "related_trials": [
+        false,
+        false,
+        false
+      ],
+      "ms": [
+        1096,
+        912,
+        1258
+      ],
       "verdict": "일치"
     },
     {
       "text": "부산",
-      "outcome": "ok",
-      "ms": 953,
-      "result": {
-        "region": "부산",
-        "period": null,
-        "interests": [],
-        "preferred_order": [],
-        "related": true
-      },
       "expected_related": true,
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "related_trials": [
+        true,
+        true,
+        true
+      ],
+      "ms": [
+        931,
+        1318,
+        1512
+      ],
       "verdict": "일치"
     },
     {
       "text": "맛집",
-      "outcome": "ok",
-      "ms": 811,
-      "result": {
-        "region": null,
-        "period": null,
-        "interests": [
-          "맛집"
-        ],
-        "preferred_order": [],
-        "related": true
-      },
       "expected_related": true,
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "related_trials": [
+        true,
+        true,
+        true
+      ],
+      "ms": [
+        1087,
+        955,
+        896
+      ],
       "verdict": "일치"
     },
     {
       "text": "이 근처 아무거나",
-      "outcome": "ok",
-      "ms": 828,
-      "result": {
-        "region": "null",
-        "period": null,
-        "interests": [],
-        "preferred_order": [],
-        "related": true
-      },
       "expected_related": true,
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "related_trials": [
+        true,
+        true,
+        true
+      ],
+      "ms": [
+        864,
+        889,
+        892
+      ],
       "verdict": "일치"
     },
     {
       "text": "주말에 축제 보고 바다 산책도 하고 싶어",
-      "outcome": "ok",
-      "ms": 1175,
-      "result": {
-        "region": "null",
-        "period": {
-          "start": "2026-09-03",
-          "end": "2026-09-04"
-        },
-        "interests": [
-          "축제",
-          "바다",
-          "산책"
-        ],
-        "preferred_order": [
-          "축제",
-          "바다 산책"
-        ],
-        "related": true
-      },
       "expected_related": true,
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "related_trials": [
+        true,
+        true,
+        true
+      ],
+      "ms": [
+        1238,
+        1155,
+        1528
+      ],
       "verdict": "일치"
     }
   ]
